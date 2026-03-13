@@ -90,7 +90,7 @@ def key_generation(model: int, skseed: str, pkseed: str = "") -> tuple[str, str]
     
     return (public_key, private_key)  # Return a tuple of (public_key, private_key)
 
-def option1(model: int, model_name: str):
+def option1(model: int, model_name: str) -> None:
     security_level = 0
     while True:
         print("\nSelect the security level (L1, L3, L5)")
@@ -113,15 +113,15 @@ def option1(model: int, model_name: str):
     pkseed = random_seed_generation(pkseed_length) if pkseed_length > 0 else ""
     public_key, private_key = key_generation(model, skseed, pkseed)
     
-    # Save keys and seeds to files
-    with open(f"{model_name}_{security_level}_skseed.pem", "w") as skseed_file:
+    # Save keys and seeds to unencrypted files (testing the algorithm, thus no encryption needed)
+    with open(f"{model_name}_L{security_level}_skseed.pem", "w") as skseed_file:
         skseed_file.write(skseed)
     if pkseed_length > 0:
-        with open(f"{model_name}_{security_level}_pkseed.pem", "w") as pkseed_file:
+        with open(f"{model_name}_L{security_level}_pkseed.pem", "w") as pkseed_file:
             pkseed_file.write(pkseed)
-    with open(f"{model_name}_{security_level}_public_key.pem", "w") as public_key_file:
+    with open(f"{model_name}_L{security_level}_public_key.pem", "w") as public_key_file:
         public_key_file.write(public_key)
-    with open(f"{model_name}_{security_level}_private_key.pem", "w") as private_key_file:
+    with open(f"{model_name}_L{security_level}_private_key.pem", "w") as private_key_file:
         private_key_file.write(private_key)
     
     print(f"Generated seeds and keys for {model_name} {security_level}:")
@@ -131,9 +131,16 @@ def option1(model: int, model_name: str):
     print(f"public_key: {public_key}")
     print(f"private_key: {private_key}")
     
+def option2(model: int, model_name: str, alpha: float, beta: float) -> None:
+    candidate_seed = input("\nEnter the name of the file with the seed to introduce noise to (blank for default name): ")
+    noisy_candidate_seed = introduce_noise(candidate_seed, alpha, beta)
+    print(f"Noisy candidate seed: {noisy_candidate_seed}")
     
+    # Save the noisy candidate seed to a file for testing
+    with open(f"{model_name}_noisy_candidate_seed.pem", "w") as noisy_seed_file:
+        noisy_seed_file.write(noisy_candidate_seed)
 
-def main():
+def main() -> None:
     # ------------------------------- Model selection -------------------------------
     while True:
         print("\nAvailable models:")
@@ -146,8 +153,6 @@ def main():
         if model_input not in [SDITH, MIRATH, MQOM, PERK, RYDE]:
             print("Invalid model selected. Please try again.")
             continue
-        elif model_input == MIRATH:
-            print("\n*Note*: MIRATH will use 'a' class algorithms.")
         else:
             model_name = {SDITH: "SDITH", 
                           MIRATH: "MIRATH", 
@@ -189,4 +194,9 @@ def main():
         if not (0 <= beta <= 1):
             print("Invalid beta value. Please enter a value between 0 and 1.")
             return
+        print(f"Beta (1 -> 0) value to use: {beta}")
+        option2(model_input, model_name, alpha, beta)
         
+if __name__ == "__main__":
+    print("Welcome to the Seed Recovery Framework for MPCitH Signature Schemes!")
+    main()
