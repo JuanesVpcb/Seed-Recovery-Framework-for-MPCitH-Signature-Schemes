@@ -7,6 +7,8 @@ MQOM = 3
 PERK = 4
 RYDE = 5
 
+
+# ========================== Model-Agnostic Algorithms for Key Recovery ==========================
 def random_seed_generation(length: int) -> str:
     """Generates a random seed of the specified length in bits. Usually, the length 
     would be determined by the security parameters of the model. For these, the ranges
@@ -90,6 +92,8 @@ def key_generation(model: int, skseed: str, pkseed: str = "") -> tuple[str, str]
     
     return (public_key, private_key)  # Return a tuple of (public_key, private_key)
 
+
+# ========================= User Interface for Testing the Algorithms ==========================
 def option1(model: int, model_name: str) -> None:
     security_level = 0
     while True:
