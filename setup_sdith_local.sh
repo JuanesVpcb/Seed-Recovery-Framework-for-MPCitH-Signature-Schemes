@@ -14,10 +14,10 @@
 #                            (default: cat1_fast)
 #   -h, --help               Show this help message
 
-set -e
+set -euo pipefail
 
 # Defaults
-EXTERNAL_SDITH_BASE="../SDitH-v2/Reference_Implementation"
+EXTERNAL_SDITH_BASE_REL="../SDitH-v2/Reference_Implementation"
 VARIANT="cat1_fast"
 SHOW_HELP=0
 
@@ -25,7 +25,7 @@ SHOW_HELP=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         -p|--path)
-            EXTERNAL_SDITH_BASE="$2"
+            EXTERNAL_SDITH_BASE_REL="$2"
             shift 2
             ;;
         -v|--variant)
@@ -76,6 +76,11 @@ EOF
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+if [[ "$EXTERNAL_SDITH_BASE_REL" = /* ]]; then
+    EXTERNAL_SDITH_BASE="$EXTERNAL_SDITH_BASE_REL"
+else
+    EXTERNAL_SDITH_BASE="$REPO_ROOT/$EXTERNAL_SDITH_BASE_REL"
+fi
 EXTERNAL_SDITH="$EXTERNAL_SDITH_BASE/sdith_${VARIANT}"
 
 # Validate variant
@@ -104,8 +109,11 @@ echo "Source:   $EXTERNAL_SDITH"
 echo ""
 
 # Create directory structure
+SHARED_BRIDGE_DIR="$REPO_ROOT/SDitH-Library/wrapper"
+SHARED_BUILD_DIR="$REPO_ROOT/SDitH-Library/build"
 LOCAL_LIB="$REPO_ROOT/SDitH-Library/sdith_${VARIANT}"
-mkdir -p "$LOCAL_LIB"/{src,lib/{aes,sha3/opt64,sha3/plain32},wrapper,build}
+mkdir -p "$LOCAL_LIB"/{src,lib/{aes,sha3/opt64,sha3/plain32},build}
+mkdir -p "$SHARED_BRIDGE_DIR" "$SHARED_BUILD_DIR"
 
 echo "Created directories under $LOCAL_LIB"
 
@@ -137,15 +145,88 @@ echo "Copying CMakeLists.txt files..."
 cp "$EXTERNAL_SDITH/lib/aes/CMakeLists.txt" "$LOCAL_LIB/lib/aes/" 2>/dev/null || true
 cp "$EXTERNAL_SDITH/lib/sha3/CMakeLists.txt" "$LOCAL_LIB/lib/sha3/" 2>/dev/null || true
 
-# Move bridge file into wrapper/ (if it exists at repo root)
-echo "Setting up wrapper/ with bridge file..."
-if [ -f "$REPO_ROOT/sdith_keygen_bridge.c" ]; then
-    mv "$REPO_ROOT/sdith_keygen_bridge.c" "$LOCAL_LIB/wrapper/sdith_keygen_bridge.c"
-    echo "Moved sdith_keygen_bridge.c to SDitH-Library/sdith_${VARIANT}/wrapper/"
-fi
+# Create a shared bridge source/header under SDitH-Library
+echo "Setting up shared bridge in SDitH-Library/wrapper/..."
+cat > "$SHARED_BRIDGE_DIR/sdith_keygen_bridge.c" << 'EOF'
+/**
+ * sdith_keygen_bridge.c
+ *
+ * Bridge exposing SDitH key generation to Python.
+ */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "sdith_signature.h"
+#include "sdith_keygen_bridge.h"
+
+static const signature_parameters* pick_params(int security_level, int fast) {
+    if (fast) {
+        if (security_level == 1) return &CAT1_FAST_PARAMETERS;
+        if (security_level == 3) return &CAT3_FAST_PARAMETERS;
+        if (security_level == 5) return &CAT5_FAST_PARAMETERS;
+    } else {
+        if (security_level == 1) return &CAT1_SHORT_PARAMETERS;
+        if (security_level == 3) return &CAT3_SHORT_PARAMETERS;
+        if (security_level == 5) return &CAT5_SHORT_PARAMETERS;
+    }
+    return NULL;
+}
+
+int sdith_bridge_keygen(int security_level, int fast,
+                        const uint8_t* skseed, const uint8_t* pkseed,
+                        uint8_t* out_public_key, uint8_t* out_secret_key) {
+    const signature_parameters* params = pick_params(security_level, fast);
+    uint8_t* entropy = NULL;
+    uint8_t* tmp_space = NULL;
+    uint64_t lambda_bytes;
+    uint64_t tmp_bytes;
+
+    if (!params || !skseed || !pkseed || !out_public_key || !out_secret_key) {
+        return -1;
+    }
+
+    lambda_bytes = params->lambda >> 3;
+
+    /* entropy = pkseed || skseed (required by sdith_keygen) */
+    entropy = (uint8_t*)malloc(2 * lambda_bytes);
+    if (!entropy) {
+        return -1;
+    }
+    memcpy(entropy, pkseed, lambda_bytes);
+    memcpy(entropy + lambda_bytes, skseed, lambda_bytes);
+
+    tmp_bytes = sdith_keygen_tmp_bytes(params);
+    tmp_space = (uint8_t*)malloc(tmp_bytes);
+    if (!tmp_space) {
+        free(entropy);
+        return -1;
+    }
+
+    sdith_keygen(params, out_secret_key, out_public_key, entropy, tmp_space);
+
+    free(tmp_space);
+    free(entropy);
+    return 0;
+}
+
+uint64_t sdith_bridge_public_key_bytes(int security_level, int fast) {
+    const signature_parameters* params = pick_params(security_level, fast);
+    if (!params) return 0;
+    return sdith_public_key_bytes(params);
+}
+
+uint64_t sdith_bridge_secret_key_bytes(int security_level, int fast) {
+    const signature_parameters* params = pick_params(security_level, fast);
+    if (!params) return 0;
+    return sdith_secret_key_bytes(params);
+}
+EOF
+echo "Created SDitH-Library/wrapper/sdith_keygen_bridge.c"
 
 # Create wrapper header
-cat > "$LOCAL_LIB/wrapper/sdith_keygen_bridge.h" << 'EOF'
+cat > "$SHARED_BRIDGE_DIR/sdith_keygen_bridge.h" << 'EOF'
 #ifndef SDITH_KEYGEN_BRIDGE_H
 #define SDITH_KEYGEN_BRIDGE_H
 
@@ -173,7 +254,7 @@ uint64_t sdith_bridge_secret_key_bytes(int security_level, int fast);
 #endif
 EOF
 
-echo "Created wrapper/sdith_keygen_bridge.h"
+echo "Created SDitH-Library/wrapper/sdith_keygen_bridge.h"
 
 # Create CMakeLists.txt for the local library
 cat > "$LOCAL_LIB/CMakeLists.txt" << 'EOF'
@@ -219,9 +300,9 @@ target_compile_definitions(vole PRIVATE ONLY_REF_IMPLEMENTATION)
 target_include_directories(vole PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # Keygen bridge shared library
-add_library(sdith_keygen SHARED wrapper/sdith_keygen_bridge.c)
+add_library(sdith_keygen SHARED ../wrapper/sdith_keygen_bridge.c)
 target_link_libraries(sdith_keygen PRIVATE vole)
-target_include_directories(sdith_keygen PRIVATE src)
+target_include_directories(sdith_keygen PRIVATE src ../wrapper)
 target_compile_definitions(sdith_keygen PRIVATE ONLY_REF_IMPLEMENTATION)
 
 # Set install names for macOS
@@ -232,7 +313,7 @@ set_target_properties(sdith_keygen PROPERTIES
 
 # Output to build directory
 set_target_properties(sdith_keygen PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build"
 )
 EOF
 
@@ -266,8 +347,8 @@ cmake -B build \
 
 cmake --build build --config Release
 
-DYLIB="$LOCAL_LIB/build/libsdith_keygen.dylib"
-SO="$LOCAL_LIB/build/libsdith_keygen.so"
+DYLIB="$REPO_ROOT/SDitH-Library/build/libsdith_keygen.dylib"
+SO="$REPO_ROOT/SDitH-Library/build/libsdith_keygen.so"
 
 if [ -f "$DYLIB" ]; then
     echo "✓ Built: $DYLIB"
@@ -294,9 +375,9 @@ echo "  1. cd $REPO_ROOT"
 echo "  2. bash build_sdith_${VARIANT}.sh"
 echo ""
 echo "The local shared library will be built at:"
-echo "  $LOCAL_LIB/build/libsdith_keygen.dylib  (macOS)"
+echo "  $REPO_ROOT/SDitH-Library/build/libsdith_keygen.dylib  (macOS)"
 echo "or"
-echo "  $LOCAL_LIB/build/libsdith_keygen.so     (Linux)"
+echo "  $REPO_ROOT/SDitH-Library/build/libsdith_keygen.so     (Linux)"
 echo ""
 echo "To vendor another variant, run:"
 echo "  bash setup_sdith_local.sh -v cat3_fast"

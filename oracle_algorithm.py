@@ -12,7 +12,7 @@ RYDE = 5
 
 # ========================== SDitH C Bridge (via ctypes) ==========================
 def _load_sdith_bridge():
-    """Loads the compiled libsdith_bridge shared library located next to this file."""
+    """Loads the compiled libsdith_keygen shared library from SDitH-Library/build."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if platform.system() == "Darwin":
         ext = "dylib"
@@ -20,11 +20,14 @@ def _load_sdith_bridge():
         ext = "dll"
     else:
         ext = "so"
-    lib_path = os.path.join(script_dir, f"libsdith_bridge.{ext}")
+    lib_path = os.path.join(script_dir, "SDitH-Library", "build", f"libsdith_keygen.{ext}")
+    if not os.path.exists(lib_path):
+        # Backward-compatible fallback for older builds that copied the dylib/so next to this file.
+        lib_path = os.path.join(script_dir, f"libsdith_keygen.{ext}")
     if not os.path.exists(lib_path):
         raise FileNotFoundError(
             f"SDitH bridge library not found at {lib_path}.\n"
-            "Run ./setup_sdith_local.sh to build it."
+            "Run ./setup_sdith_local.sh and then bash ./build_sdith_[variant].sh to build it."
         )
     lib = ctypes.CDLL(lib_path)
 
