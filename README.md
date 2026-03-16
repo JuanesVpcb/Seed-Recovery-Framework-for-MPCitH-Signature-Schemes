@@ -94,7 +94,7 @@ bash setup_sdith_local.sh \
 
 #### Option C: Vendor Multiple Variants
 
-To include all security levels (CAT1_FAST, CAT3_FAST, CAT5_FAST):
+To include all security levels you may choose one by one which to use from the 6 available (CAT1_FAST, CAT3_FAST, CAT5_FAST, CAT1_SHORT, CAT3_SHORT, CAT5_SHORT):
 
 ```bash
 bash setup_sdith_local.sh -v cat1_fast
@@ -104,7 +104,7 @@ bash setup_sdith_local.sh -v cat5_fast
 
 **What this does:**
 
-- Creates local `SDitH-Library/sdith_cat{1,3,5}_fast/` folders
+- Creates local `SDitH-Library/sdith_cat{1,3,5}_{fast,short}/` folders
 - Copies all required source files (src/, lib/aes/, lib/sha3/) from the external reference
 - Generates a local `CMakeLists.txt` configured for in-repo building
 - Creates variant-specific build scripts
@@ -114,15 +114,14 @@ bash setup_sdith_local.sh -v cat5_fast
 After setup, compile the C bridge for your chosen variant:
 
 ```bash
-bash build_sdith_cat1_fast.sh
-bash build_sdith_cat3_fast.sh
-bash build_sdith_cat5_fast.sh
+bash build_sdith_[variant].sh
 ```
 
 **Build output:**
 
 - **macOS:** `SDitH-Library/sdith_cat1_fast/build/libsdith_keygen.dylib`
 - **Linux:** `SDitH-Library/sdith_cat1_fast/build/libsdith_keygen.so`
+- **Windows:** `SDitH-Library/sdith_cat1_fast/build/libsdith_keygen.dll`
 - **Python Interface:** Automatically detects and loads the built library via ctypes
 
 ### 4. Run the Framework

@@ -20,11 +20,17 @@ def _load_sdith_bridge():
         ext = "dll"
     else:
         ext = "so"
-    lib_path = os.path.join(script_dir, "SDitH-Library", "build", f"libsdith_keygen.{ext}")
-    if not os.path.exists(lib_path):
-        # Backward-compatible fallback for older builds that copied the dylib/so next to this file.
-        lib_path = os.path.join(script_dir, f"libsdith_keygen.{ext}")
-    if not os.path.exists(lib_path):
+    candidates = [
+        os.path.join(script_dir, "SDitH-Library", "build", f"libsdith_keygen.{ext}"),
+        os.path.join(script_dir, f"libsdith_keygen.{ext}"),
+    ]
+    if platform.system() == "Windows":
+        candidates.append(os.path.join(script_dir, "SDitH-Library", "build", "sdith_keygen.dll"))
+        candidates.append(os.path.join(script_dir, "sdith_keygen.dll"))
+
+    lib_path = next((p for p in candidates if os.path.exists(p)), None)
+    if lib_path is None:
+        lib_path = candidates[0]
         raise FileNotFoundError(
             f"SDitH bridge library not found at {lib_path}.\n"
             "Run ./setup_sdith_local.sh and then bash ./build_sdith_[variant].sh to build it."

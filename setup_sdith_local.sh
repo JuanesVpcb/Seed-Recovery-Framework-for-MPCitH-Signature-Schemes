@@ -265,9 +265,15 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Default build type" FORCE)
 endif()
 
-set(CMAKE_C_FLAGS_DEBUG "-O0 -g3 -Wall -Werror")
-set(CMAKE_C_FLAGS_RELEASE "-O3 -g3 -Wall -Werror -DNDEBUG")
 enable_language(ASM)
+
+if(MSVC)
+    set(CMAKE_C_FLAGS_DEBUG "/Od /Zi /W4")
+    set(CMAKE_C_FLAGS_RELEASE "/O2 /DNDEBUG")
+else()
+    set(CMAKE_C_FLAGS_DEBUG "-O0 -g3 -Wall -Werror")
+    set(CMAKE_C_FLAGS_RELEASE "-O3 -g3 -Wall -Werror -DNDEBUG")
+endif()
 
 # Build SHA3 library
 add_subdirectory(lib/sha3)
@@ -295,7 +301,11 @@ set(VOLE_SRCS
 )
 
 add_library(vole STATIC ${VOLE_SRCS})
-target_link_libraries(vole sha3 aes m)
+if(MSVC)
+    target_link_libraries(vole PRIVATE sha3 aes)
+else()
+    target_link_libraries(vole PRIVATE sha3 aes m)
+endif()
 target_compile_definitions(vole PRIVATE ONLY_REF_IMPLEMENTATION)
 target_include_directories(vole PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -306,10 +316,12 @@ target_include_directories(sdith_keygen PRIVATE src ../wrapper)
 target_compile_definitions(sdith_keygen PRIVATE ONLY_REF_IMPLEMENTATION)
 
 # Set install names for macOS
-set_target_properties(sdith_keygen PROPERTIES
-    BUILD_RPATH "@loader_path"
-    INSTALL_RPATH "@loader_path"
-)
+if(APPLE)
+    set_target_properties(sdith_keygen PROPERTIES
+        BUILD_RPATH "@loader_path"
+        INSTALL_RPATH "@loader_path"
+    )
+endif()
 
 # Output to build directory
 set_target_properties(sdith_keygen PROPERTIES
@@ -325,7 +337,7 @@ cat > "$REPO_ROOT/build_sdith_${VARIANT}.sh" << 'EOF'
 # build_sdith_VARIANT.sh
 # Builds the local vendored SDitH library for VARIANT
 
-set -e
+set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 VARIANT="VARIANT"
@@ -340,20 +352,33 @@ fi
 echo "=== Building local SDitH keygen library ($VARIANT) ==="
 cd "$LOCAL_LIB"
 
-cmake -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-    .
+UNAME="$(uname -s)"
+if [ "$UNAME" = "Darwin" ]; then
+    cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+        .
+else
+    cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        .
+fi
 
 cmake --build build --config Release
 
 DYLIB="$REPO_ROOT/SDitH-Library/build/libsdith_keygen.dylib"
 SO="$REPO_ROOT/SDitH-Library/build/libsdith_keygen.so"
+DLL="$REPO_ROOT/SDitH-Library/build/libsdith_keygen.dll"
+DLL_NO_LIB="$REPO_ROOT/SDitH-Library/build/sdith_keygen.dll"
 
 if [ -f "$DYLIB" ]; then
     echo "✓ Built: $DYLIB"
 elif [ -f "$SO" ]; then
     echo "✓ Built: $SO"
+elif [ -f "$DLL" ]; then
+    echo "✓ Built: $DLL"
+elif [ -f "$DLL_NO_LIB" ]; then
+    echo "✓ Built: $DLL_NO_LIB"
 else
     echo "ERROR: Build failed"
     exit 1
@@ -362,8 +387,12 @@ fi
 echo "=== Build complete ==="
 EOF
 
-# Replace VARIANT placeholder in build script
-sed -i '' "s/VARIANT/$VARIANT/g" "$REPO_ROOT/build_sdith_${VARIANT}.sh"
+# Replace VARIANT placeholder in build script (portable across macOS/Linux/Git-Bash)
+if [ "$(uname -s)" = "Darwin" ]; then
+    sed -i '' "s/VARIANT/$VARIANT/g" "$REPO_ROOT/build_sdith_${VARIANT}.sh"
+else
+    sed -i "s/VARIANT/$VARIANT/g" "$REPO_ROOT/build_sdith_${VARIANT}.sh"
+fi
 chmod +x "$REPO_ROOT/build_sdith_${VARIANT}.sh"
 echo "Created build_sdith_${VARIANT}.sh"
 
@@ -378,7 +407,8 @@ echo "The local shared library will be built at:"
 echo "  $REPO_ROOT/SDitH-Library/build/libsdith_keygen.dylib  (macOS)"
 echo "or"
 echo "  $REPO_ROOT/SDitH-Library/build/libsdith_keygen.so     (Linux)"
+echo "or"
+echo "  $REPO_ROOT/SDitH-Library/build/libsdith_keygen.dll    (Windows)"
 echo ""
 echo "To vendor another variant, run:"
-echo "  bash setup_sdith_local.sh -v cat3_fast"
-echo "  bash setup_sdith_local.sh -v cat5_fast"
+echo "  bash setup_sdith_local.sh -v [variant]"
