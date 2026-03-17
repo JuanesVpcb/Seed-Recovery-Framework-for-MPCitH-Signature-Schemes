@@ -65,17 +65,12 @@ def _get_sdith_lib():
     return _sdith_lib
 
 
-def _sdith_keygen(security_level: int, skseed_int: int, pkseed_int: int) -> tuple[bytes, bytes]:
+def _sdith_keygen(security_level: int, skseed: bytes, pkseed: bytes, fast: int) -> tuple[bytes, bytes]:
     """
     Calls the C bridge to run SDitH key generation.
     Returns (public_key_bytes, secret_key_bytes).
     """
     lib = _get_sdith_lib()
-    fast = 1  # always use FAST parameter sets
-    lambda_bytes = {1: 16, 3: 24, 5: 32}[security_level]
-
-    skseed_bytes = skseed_int.to_bytes(lambda_bytes, byteorder='big')
-    pkseed_bytes = pkseed_int.to_bytes(lambda_bytes, byteorder='big')
 
     pk_len = lib.sdith_bridge_public_key_bytes(security_level, fast)
     sk_len = lib.sdith_bridge_secret_key_bytes(security_level, fast)
@@ -85,7 +80,7 @@ def _sdith_keygen(security_level: int, skseed_int: int, pkseed_int: int) -> tupl
 
     ret = lib.sdith_bridge_keygen(
         security_level, fast,
-        skseed_bytes, pkseed_bytes,
+        skseed, pkseed,
         pk_buf, sk_buf
     )
     if ret != 0:
@@ -95,35 +90,31 @@ def _sdith_keygen(security_level: int, skseed_int: int, pkseed_int: int) -> tupl
 
 
 # ========================== Model-Agnostic Algorithms for Key Recovery ==========================
-def random_seed_generation(length: int) -> int:
+def random_seed_generation(length: int) -> bytes:
     """Generates a random seed of the specified length in bits. Usually, the length 
     would be determined by the security parameters of the model. For these, the ranges
     are typically between 128 and 256 bits."""
     
-    return int(''.join(random.choice('01') for _ in range(length)), 2)
+    return int(''.join(random.choice('01') for _ in range(length)), 2).to_bytes((length + 7) // 8, byteorder='big')
 
-def introduce_noise(seed: int, alpha: float, beta: float) -> int:
-    """Introduces noise to the seed based on the specified alpha and beta parameters."""
-    seed_bits = seed.to_bytes((seed.bit_length() + 7) // 8, byteorder='big')
-    noisy_seed = []
-    for bit in seed_bits:
-        if bit == 0:
-            # Flip 0 to 1 with probability alpha
-            if random.random() < alpha:
-                noisy_seed.append(1)
+def introduce_noise(seed: bytes, alpha: float, beta: float) -> bytes:
+    """Introduces noise to the seed based on the specified alpha and beta parameters.
+    Each bit of every byte is independently flipped: 0->1 with probability alpha,
+    1->0 with probability beta."""
+    noisy_bytes = []
+    for byte in seed:
+        noisy_byte = 0
+        for i in range(7, -1, -1): # iterate bits MSB to LSB
+            bit = (byte >> i) & 1
+            if bit == 0:
+                noisy_bit = 1 if random.random() < alpha else 0
             else:
-                noisy_seed.append(0)
-        elif bit == 1:
-            # Flip 1 to 0 with probability beta
-            if random.random() < beta:
-                noisy_seed.append(0)
-            else:
-                noisy_seed.append(1)
-        else:
-            raise ValueError("Invalid bit in seed. Seed should only contain 0 and 1.")
-    return int(''.join(noisy_seed), 2)
+                noisy_bit = 0 if random.random() < beta else 1
+            noisy_byte = (noisy_byte << 1) | noisy_bit
+        noisy_bytes.append(noisy_byte)
+    return bytes(noisy_bytes)
 
-def oracle_algorithm(model: int, candidate: int, public_key: int, security_level: int = 1) -> bool:
+def oracle_algorithm(model: int, candidate: bytes, public_key: bytes | int, security_level: int = 1) -> bool:
     """Implements a modular oracle algorithm to determine whether the seed
     expands correctly into the correct public-private key pair for the 
     specified model.
@@ -131,8 +122,6 @@ def oracle_algorithm(model: int, candidate: int, public_key: int, security_level
     For SDitH, `candidate` is the skseed integer and `public_key` is either
     a bytes object or an integer representing the expected public key.
     `security_level` must be 1, 3, or 5 (default: 1)."""
-    
-    reconstructed_public_key = None  # Saves the reconstructed public key from the candidate seed
     
     if model == SDITH:
         lambda_bytes = {1: 16, 3: 24, 5: 32}[security_level]
@@ -143,11 +132,9 @@ def oracle_algorithm(model: int, candidate: int, public_key: int, security_level
             known_pkseed = int.from_bytes(public_key[:lambda_bytes], byteorder='big')
         else:
             known_pkseed = 0  # unknown pkseed; will only match if pkseed happens to be zero
-        candidate_pk, _ = _sdith_keygen(security_level, candidate, known_pkseed)
-        reconstructed_public_key = candidate_pk
-        if isinstance(public_key, (bytes, bytearray)):
-            return reconstructed_public_key == bytes(public_key)
-        return int.from_bytes(reconstructed_public_key, byteorder='big') == public_key
+        candidate_pk, _ = _sdith_keygen(security_level, candidate, known_pkseed, fast=1)
+        if isinstance(public_key, (bytes, bytearray)): return candidate_pk == bytes(public_key)
+        return int.from_bytes(candidate_pk, byteorder='big') == public_key
     elif model == MIRATH:
         print("Not implemented yet for MIRATH model.")
         pass
@@ -164,9 +151,9 @@ def oracle_algorithm(model: int, candidate: int, public_key: int, security_level
         raise ValueError("Invalid model specified.")
     
     # Return True if the seed is valid, False otherwise
-    return reconstructed_public_key == public_key
+    return False
 
-def key_generation(model: int, skseed: int, pkseed: int = 0, security_level: int = 1) -> tuple:
+def key_generation(model: int, skseed: bytes, pkseed: bytes = 0, security_level: int = 1) -> tuple:
     """Generates a public-private key pair based on the provided seed and model.
     
     For SDitH, returns (public_key_bytes, secret_key_bytes).
@@ -177,7 +164,8 @@ def key_generation(model: int, skseed: int, pkseed: int = 0, security_level: int
     private_key = 0 # Placeholder for the generated private key
     
     if model == SDITH:
-        public_key, private_key = _sdith_keygen(security_level, skseed, pkseed)
+        fast = 1 if input("\nUse FAST parameter sets for SDitH? (y/n, default: y): ").lower() == 'y' else 0
+        public_key, private_key = _sdith_keygen(security_level, skseed, pkseed, fast=fast)
     elif model == MIRATH:
         print("Not implemented yet for MIRATH model.")
         pass
@@ -197,7 +185,7 @@ def key_generation(model: int, skseed: int, pkseed: int = 0, security_level: int
 
 
 # ========================= User Interface for Testing the Algorithms ==========================
-def option1(model: int, model_name: str) -> None:
+def option1(model: int, model_name: str) -> tuple:
     security_level = 0
     while True:
         print("\nSelect the security level (L1, L3, L5)")
@@ -226,21 +214,23 @@ def option1(model: int, model_name: str) -> None:
 
     # Save keys and seeds to unencrypted files (testing the algorithm, thus no encryption needed)
     with open(f"{model_name}_L{security_level}_skseed.pem", "w") as skseed_file:
-        skseed_file.write(str(skseed))
+        skseed_file.write(skseed.hex())
     if pkseed_length > 0:
         with open(f"{model_name}_L{security_level}_pkseed.pem", "w") as pkseed_file:
-            pkseed_file.write(str(pkseed))
+            pkseed_file.write(pkseed.hex())
     with open(f"{model_name}_L{security_level}_public_key.pem", "w") as public_key_file:
         public_key_file.write(pk_display)
     with open(f"{model_name}_L{security_level}_private_key.pem", "w") as private_key_file:
         private_key_file.write(sk_display)
     
-    print(f"Generated seeds and keys for {model_name} {security_level}:")
-    print(f"skseed: {skseed}")
+    print(f"\nGenerated seeds and keys for {model_name} {security_level}:")
+    print(f"skseed: {(skseed.hex())}")
     if pkseed_length > 0:
-        print(f"pkseed: {pkseed}")
+        print(f"pkseed: {pkseed.hex()}")
     print(f"public_key: {pk_display}")
     print(f"private_key: {sk_display}")
+    
+    return skseed, pkseed, public_key, private_key
     
 def option2(model_name: str, alpha: float, beta: float) -> None:
     candidate_seed_f = input("\nEnter the name of the file with the seed to introduce noise to (blank for default): ")
@@ -248,7 +238,7 @@ def option2(model_name: str, alpha: float, beta: float) -> None:
         candidate_seed_f = f"{model_name}_L1_skseed.pem"  # Default file name for testing
     try:
         with open(candidate_seed_f, "r") as seed_file:
-            candidate_seed = int(seed_file.read().strip())
+            candidate_seed = bytes.fromhex(seed_file.read().strip())
     except FileNotFoundError:
         print(f"File {candidate_seed_f} not found. Please check the file name and try again.")
         return
@@ -256,11 +246,13 @@ def option2(model_name: str, alpha: float, beta: float) -> None:
         print(f"File {candidate_seed_f} does not contain a valid integer seed. Please check the file contents and try again.")
         return
     noisy_candidate_seed = introduce_noise(candidate_seed, alpha, beta)
-    print(f"Noisy candidate seed: {noisy_candidate_seed}")
+    print(f"Noisy candidate seed: {noisy_candidate_seed.hex()}")
     
     # Save the noisy candidate seed to a file for testing
     with open(f"{model_name}_noisy_candidate_seed.pem", "w") as noisy_seed_file:
-        noisy_seed_file.write(str(noisy_candidate_seed))
+        noisy_seed_file.write(noisy_candidate_seed.hex())
+        
+    return noisy_candidate_seed
 
 def main() -> None:
     # ------------------------------- Model selection -------------------------------
@@ -308,7 +300,7 @@ def main() -> None:
     
     # Generate random seed and keys
     elif operation_input == 1:
-        option1(model_input, model_name)
+        _ = option1(model_input, model_name)
     
     # Test seed candidate with CBA bit-flip probability values
     elif operation_input == 2:
@@ -319,7 +311,7 @@ def main() -> None:
             print("Invalid beta value. Please enter a value between 0 and 1.")
             return
         print(f"Beta (1 -> 0) value to use: {beta}")
-        option2(model_input, model_name, alpha, beta)
+        _ = option2(model_name, alpha, beta)
         
     elif operation_input == 3:
         # TODO: Implement the logic to test a candidate seed against the oracle algorithm for the selected model.
