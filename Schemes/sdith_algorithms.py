@@ -1,171 +1,266 @@
 import hashlib
+import math
 import secrets
 
 from abstract_oracle import MPCitHOracle
 
 
-class SDitHOracle(MPCitHOracle):
-    """Simplified SDitH-like oracle with deterministic seed expansion and serialization."""
+class _ShakePRG:
+    """SHAKE-based PRG for CAT1 (SHAKE128) and CAT3/CAT5 (SHAKE256)."""
 
-    PARAMS = {
-        1: {"lambda": 16, "n": 256, "k": 128, "t": 16},
-        3: {"lambda": 24, "n": 384, "k": 192, "t": 24},
-        5: {"lambda": 32, "n": 512, "k": 256, "t": 32},
+    def __init__(self, seed: bytes, iv: bytes, shake_size: int) -> None:
+        self._seed = seed
+        self._iv = iv
+        self._shake_size = shake_size
+        self._counter = 0
+        self._buffer = b""
+
+    def read(self, out_len: int) -> bytes:
+        while len(self._buffer) < out_len:
+            if self._shake_size == 128:
+                xof = hashlib.shake_128()
+            else:
+                xof = hashlib.shake_256()
+
+            xof.update(self._seed)
+            xof.update(self._iv)
+            xof.update(self._counter.to_bytes(8, "little"))
+            self._buffer += xof.digest(64)
+            self._counter += 1
+
+        out = self._buffer[:out_len]
+        self._buffer = self._buffer[out_len:]
+        return out
+
+
+class SDitHOracle(MPCitHOracle):
+    """SDitH key expansion supporting CAT1_FAST, CAT3_FAST, and CAT5_FAST."""
+
+    PARAMS_BY_LEVEL = {
+        1: {
+            "variant": "cat1_fast",
+            "lambda_bits": 128,
+            "kappa": 8,
+            "tau": 16,
+            "target_topen": 101,
+            "proofow_w": 2,
+            "rsd_w": 56,
+            "rsd_n": 10360,
+            "mux_depth": 4,
+            "mux_arities": (4, 4, 4, 3),
+            "shake_bits": 128,
+        },
+        3: {
+            "variant": "cat3_fast",
+            "lambda_bits": 192,
+            "kappa": 8,
+            "tau": 24,
+            "target_topen": 153,
+            "proofow_w": 2,
+            "rsd_w": 73,
+            "rsd_n": 18396,
+            "mux_depth": 4,
+            "mux_arities": (4, 4, 4, 4),
+            "shake_bits": 256,
+        },
+        5: {
+            "variant": "cat5_fast",
+            "lambda_bits": 256,
+            "kappa": 8,
+            "tau": 32,
+            "target_topen": 207,
+            "proofow_w": 2,
+            "rsd_w": 104,
+            "rsd_n": 19864,
+            "mux_depth": 4,
+            "mux_arities": (4, 4, 4, 3),
+            "shake_bits": 256,
+        },
     }
 
-    def __init__(self, security_level: int = 1) -> None:
-        if security_level not in self.PARAMS:
-            raise ValueError("security_level must be one of: 1, 3, 5")
+    def __init__(self, security_level: int = 1, fast: bool = True) -> None:
+        if security_level not in self.PARAMS_BY_LEVEL:
+            raise ValueError(f"security_level must be one of {list(self.PARAMS_BY_LEVEL.keys())}")
+        if not fast:
+            raise ValueError("This framework currently supports only fast SDitH variants")
+
         self.security_level = security_level
-        self.params = self.PARAMS[security_level]
+        self.fast = fast
+        self.params = dict(self.PARAMS_BY_LEVEL[security_level])
+        self.params["lambda_bytes"] = self.params["lambda_bits"] // 8
+        self.params["rsd_codim"] = self._compute_rsd_codim(self.params["rsd_n"], self.params["rsd_w"])
+        self.params["rsd_codim_bytes"] = (self.params["rsd_codim"] + 7) >> 3
+        self.params["npw"] = self.params["rsd_n"] // self.params["rsd_w"]
+        self.params["n_minus_k"] = self.params["rsd_n"] - self.params["rsd_codim"]
+        self.params["h_col_bytes"] = self.params["rsd_codim_bytes"]
+        self.params["h_last_mask"] = 0xFF >> ((-self.params["rsd_codim"]) & 7)
+        self.params["mux_inputs"] = self._compute_mux_inputs(
+            self.params["mux_depth"], self.params["mux_arities"]
+        )
+        self.params["encoded_solution_bytes"] = (
+            (self.params["rsd_w"] * self.params["mux_inputs"] + 7) >> 3
+        )
 
     def seeds(self) -> tuple[bytes, bytes]:
-        """Generate (skseed, pkseed), both lambda-byte values."""
-        lam = self.params["lambda"]
+        lam = self.params["lambda_bytes"]
         return secrets.token_bytes(lam), secrets.token_bytes(lam)
 
     def expand(self, seeds: tuple[bytes, bytes]) -> dict:
-        """
-        Expand seeds deterministically using PRG.Init-style initialization.
-
-        - ExpandH uses pkseed and integer sampling from a PRG stream.
-        - Witness uses skseed and integer sampling for support positions.
-        """
-        if not isinstance(seeds, tuple) or len(seeds) != 2:
-            raise ValueError("seeds must be a tuple: (skseed, pkseed)")
-
-        skseed, pkseed = seeds
-        expected = self.params["lambda"]
-        if len(skseed) != expected or len(pkseed) != expected:
-            raise ValueError("seed sizes do not match security level")
-
-        h_prg = self._prg_init(pkseed, b"ExpandH")
-        h_matrix = self._expand_h(h_prg)
-
-        w_prg = self._prg_init(skseed, b"Witness")
-        witness = self._sample_weight_t_vector(w_prg)
-
-        return {
-            "H": h_matrix,
-            "witness": witness,
-            "skseed": skseed,
-            "pkseed": pkseed,
-        }
+        skseed, pkseed = self._validate_seeds(seeds)
+        return self._expand_instance_with_solution(skseed, pkseed)
 
     def proof(self, expanded_material: dict) -> bytes:
-        """Compute syndrome y = H * witness over GF(2), serialized as bytes."""
-        h_matrix = expanded_material["H"]
-        witness = expanded_material["witness"]
-        syndrome_bits = []
-
-        for row in h_matrix:
-            dot = 0
-            for i, bit in enumerate(row):
-                dot ^= bit & witness[i]
-            syndrome_bits.append(dot)
-
-        return self._bits_to_bytes(syndrome_bits)
+        return expanded_material["pkey_y"]
 
     def verify(self, seeds: tuple[bytes, bytes], y: bytes, expanded_material: dict) -> bytes:
-        """Return serialized public key if y is consistent; otherwise empty bytes."""
-        if not isinstance(y, (bytes, bytearray)):
-            raise ValueError("y must be bytes")
-
-        recomputed = self.proof(expanded_material)
-        if recomputed != bytes(y):
+        _, pkseed = self._validate_seeds(seeds)
+        if bytes(y) != expanded_material["pkey_y"]:
             return b""
+        return self.serialize_public_key(pkseed, expanded_material["pkey_y"])
 
-        _, pkseed = seeds
-        return self.serialize_public_key(pkseed, recomputed)
-
-    # Helper methods for key generation and serialization
     def keygen_from_seeds(self, skseed: bytes, pkseed: bytes) -> tuple[bytes, bytes]:
-        """Deterministic key generation from explicit seeds."""
-        expanded = self.expand((skseed, pkseed))
-        y = self.proof(expanded)
-        pk = self.serialize_public_key(pkseed, y)
-        sk = self.serialize_secret_key(pkseed, y, expanded['witness'], skseed)
-        return pk, sk
+        expanded = self._expand_instance_with_solution(skseed, pkseed)
+        public_key = self.serialize_public_key(pkseed, expanded["pkey_y"])
+        secret_key = self.serialize_secret_key(
+            skseed,
+            pkseed,
+            expanded["encoded_solution"],
+            expanded["pkey_y"],
+        )
+        return public_key, secret_key
 
-    def serialize_public_key(self, h_a_seed: bytes, y: bytes) -> bytes:
-        """Serialize public key as H_a_seed || y."""
-        return h_a_seed + y
+    def serialize_public_key(self, pkey_seed: bytes, pkey_y: bytes) -> bytes:
+        return pkey_seed + pkey_y
 
-    def deserialize_public_key(self, pk: bytes) -> tuple[bytes, bytes]:
-        """Deserialize public key encoded as H_a_seed || y."""
-        lam = self.params["lambda"]
-        if len(pk) < lam:
-            raise ValueError("public key is too short")
-        return pk[:lam], pk[lam:]
+    def deserialize_public_key(self, public_key: bytes) -> tuple[bytes, bytes]:
+        lam = self.params["lambda_bytes"]
+        codim_bytes = self.params["rsd_codim_bytes"]
+        expected = lam + codim_bytes
+        if len(public_key) != expected:
+            raise ValueError("invalid public key size for cat1_fast")
+        return public_key[:lam], public_key[lam:]
 
-    def serialize_secret_key(self, pkseed: bytes, y: bytes, witness: list[int], skseed: bytes) -> bytes:
-        """Serialize secret key as raw master seed m_seed."""
-        return skseed + y + self._bits_to_bytes(witness) + pkseed
+    def serialize_secret_key(
+        self,
+        skey_seed: bytes,
+        pkey_seed: bytes,
+        skey_encoded_solution: bytes,
+        pkey_y: bytes,
+    ) -> bytes:
+        return skey_seed + pkey_seed + skey_encoded_solution + pkey_y
+    
+    def get_seedpk(self, public_key: bytes) -> bytes:
+        return self.deserialize_public_key(public_key)[0]
+    
+    def get_seedsk(self, private_key: bytes) -> bytes:
+        lam = self.params["lambda_bytes"]
+        return private_key[:lam]
+    
+    def get_y(self, public_key: bytes) -> bytes:
+        return self.deserialize_public_key(public_key)[1]
 
-    def deserialize_secret_key(self, sk: bytes) -> bytes:
-        """Deserialize secret key (raw m_seed)."""
-        return sk
+    def _expand_instance_with_solution(self, skseed: bytes, pkseed: bytes) -> dict:
+        h_rows = self._expand_h_from_pkseed(pkseed)
+        solution = self._sample_solution_from_skseed(skseed)
+        pkey_y = self._compute_pkey_y_from_h_and_solution(h_rows, solution)
+        encoded_solution = self._encode_solution(solution)
+        return {
+            "H_rows": h_rows,
+            "solution": solution,
+            "encoded_solution": encoded_solution,
+            "pkey_y": pkey_y,
+            "skey_seed": skseed,
+            "pkey_seed": pkseed,
+        }
 
-    # Routines for deterministic PRG expansion and sampling
-    def _prg_init(self, seed: bytes, domain: bytes):
-        """Initialize XOF-based PRG state with domain separation."""
-        # TODO: In a real implementation, we would want to use a proper XOF construction with a counter for multiple calls.
-        xof = hashlib.shake_256()
-        xof.update(b"SDitH-v2")
-        xof.update(domain)
-        xof.update(len(seed).to_bytes(2, "big"))
-        xof.update(seed)
-        return xof
+    def _expand_h_from_pkseed(self, pkseed: bytes) -> list[bytes]:
+        prg = self._prg_init(pkseed)
+        n_minus_k = self.params["n_minus_k"]
+        col_bytes = self.params["h_col_bytes"]
+        mask = self.params["h_last_mask"]
 
-    def _sample_uint(self, prg_state, modulus: int) -> int:
-        """Sample an unbiased integer in [0, modulus)."""
-        if modulus <= 0:
-            raise ValueError("modulus must be > 0")
+        h_rows = []
+        for _ in range(n_minus_k):
+            row = bytearray(prg.read(col_bytes))
+            row[-1] &= mask
+            h_rows.append(bytes(row))
+        return h_rows
 
-        threshold = (1 << 16) - ((1 << 16) % modulus)
-        while True:
-            candidate = int.from_bytes(prg_state.digest(2), "big")
-            if candidate < threshold:
-                return candidate % modulus
+    def _sample_solution_from_skseed(self, skseed: bytes) -> list[int]:
+        prg = self._prg_init(skseed)
+        npw = self.params["npw"]
+        npw_max = (1 << 32) - ((1 << 32) % npw)
+        solution = []
+        for _ in range(self.params["rsd_w"]):
+            while True:
+                pos = int.from_bytes(prg.read(4), "little")
+                if pos < npw_max:
+                    solution.append(pos % npw)
+                    break
+        return solution
 
-    def _expand_h(self, prg_state) -> list[list[int]]:
-        """ExpandH: build a binary (n-k) x n matrix from PRG integer sampling."""
-        n = self.params["n"]
-        r = n - self.params["k"]
-        h_matrix = []
+    def _compute_pkey_y_from_h_and_solution(self, h_rows: list[bytes], solution: list[int]) -> bytes:
+        rsd_w = self.params["rsd_w"]
+        npw = self.params["npw"]
+        rsd_codim = self.params["rsd_codim"]
+        col_bytes = self.params["h_col_bytes"]
+        yy = bytearray(self.params["rsd_codim_bytes"])
 
-        for _ in range(r):
-            row = [0] * n
-            for j in range(n):
-                row[j] = self._sample_uint(prg_state, 2)
-            h_matrix.append(row)
+        for i in range(rsd_w):
+            real_index = i * npw + solution[i]
+            if real_index < rsd_codim:
+                yy[real_index >> 3] ^= 1 << (real_index & 7)
+            else:
+                row = h_rows[real_index - rsd_codim]
+                for j in range(col_bytes):
+                    yy[j] ^= row[j]
+        yy[-1] &= self.params["h_last_mask"]
+        return bytes(yy)
 
-        return h_matrix
+    def _encode_solution(self, solution: list[int]) -> bytes:
+        rsd_w = self.params["rsd_w"]
+        mux_depth = self.params["mux_depth"]
+        mux_arities = self.params["mux_arities"]
+        out = bytearray(self.params["encoded_solution_bytes"])
 
-    def _sample_weight_t_vector(self, prg_state) -> list[int]:
-        """Sample witness of length n and Hamming weight t."""
-        n = self.params["n"]
-        t = self.params["t"]
-        witness = [0] * n
-        used = set()
+        bitpos = 0
+        for i in range(rsd_w):
+            si = solution[i]
+            for j in range(mux_depth):
+                arj = mux_arities[j]
+                sij = si % arj
+                si //= arj
+                if sij != 0:
+                    pos = bitpos + sij - 1
+                    out[pos // 8] |= 1 << (pos % 8)
+                bitpos += arj - 1
+        return bytes(out)
 
-        while len(used) < t:
-            idx = self._sample_uint(prg_state, n)
-            if idx in used:
-                continue
-            used.add(idx)
-            witness[idx] = 1
+    def _validate_seeds(self, seeds: tuple) -> tuple[bytes, bytes]:
+        if not isinstance(seeds, tuple) or len(seeds) != 2:
+            raise ValueError("seeds must be a tuple: (skseed, pkseed)")
+        skseed, pkseed = seeds
+        lam = self.params["lambda_bytes"]
+        if len(skseed) != lam or len(pkseed) != lam:
+            raise ValueError("seed size must be lambda_bytes for cat1_fast")
+        return skseed, pkseed
 
-        return witness
+    def _prg_init(self, seed: bytes) -> _ShakePRG:
+        iv = bytes(self.params["lambda_bytes"])
+        shake_bits = self.params["shake_bits"]
+        return _ShakePRG(seed=seed, iv=iv, shake_size=shake_bits)
 
     @staticmethod
-    def _bits_to_bytes(bits: list[int]) -> bytes:
-        """Pack a list of 0/1 bits into bytes (MSB first in each byte)."""
-        if not bits:
-            return b""
+    def _compute_mux_inputs(mux_depth: int, mux_arities: tuple[int, ...]) -> int:
+        mux_inputs = 0
+        for i in range(mux_depth):
+            mux_inputs += mux_arities[i] - 1
+        return mux_inputs
 
-        out = bytearray((len(bits) + 7) // 8)
-        for i, bit in enumerate(bits):
-            if bit:
-                out[i // 8] |= 1 << (7 - (i % 8))
-        return bytes(out)
+    @staticmethod
+    def _compute_rsd_codim(rsd_n: int, rsd_w: int) -> int:
+        # Equivalent to compute_rsd_codim() in sdith_signature.c
+        log2_inv_target_density = 6.64385618977
+        rsd_nsw = rsd_n // rsd_w
+        rsd_min_codim = math.ceil(rsd_w * math.log2(rsd_nsw) + log2_inv_target_density)
+        return (rsd_min_codim + 7) & ~7
