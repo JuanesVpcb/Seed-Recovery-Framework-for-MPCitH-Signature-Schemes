@@ -137,7 +137,7 @@ class SDitHOracle(MPCitHOracle):
         codim_bytes = self.params["rsd_codim_bytes"]
         expected = lam + codim_bytes
         if len(public_key) != expected:
-            raise ValueError("invalid public key size for cat1_fast")
+            raise ValueError("invalid public key size for variant")
         return public_key[:lam], public_key[lam:]
 
     def serialize_secret_key(
@@ -242,7 +242,7 @@ class SDitHOracle(MPCitHOracle):
         skseed, pkseed = seeds
         lam = self.params["lambda_bytes"]
         if len(skseed) != lam or len(pkseed) != lam:
-            raise ValueError("seed size must be lambda_bytes for cat1_fast")
+            raise ValueError(f"seed size must be {lam} bytes for the variant")
         return skseed, pkseed
 
     def _prg_init(self, seed: bytes) -> _ShakePRG:
