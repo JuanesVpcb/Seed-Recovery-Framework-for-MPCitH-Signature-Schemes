@@ -101,6 +101,7 @@ class SDitHOracle(MPCitHOracle):
             (self.params["rsd_w"] * self.params["mux_inputs"] + 7) >> 3
         )
 
+    # Implementations of the abstract methods from MPCitHOracle for SDitH's specifics
     def seeds(self) -> tuple[bytes, bytes]:
         lam = self.params["lambda_bytes"]
         return secrets.token_bytes(lam), secrets.token_bytes(lam)
@@ -116,23 +117,30 @@ class SDitHOracle(MPCitHOracle):
         _, pkseed = self._validate_seeds(seeds)
         if bytes(y) != expanded_material["pkey_y"]:
             return b""
-        return self.serialize_public_key(pkseed, expanded_material["pkey_y"])
+        return self._serialize_public_key(pkseed, expanded_material["pkey_y"])
 
     def keygen_from_seeds(self, skseed: bytes, pkseed: bytes) -> tuple[bytes, bytes]:
         expanded = self._expand_instance_with_solution(skseed, pkseed)
-        public_key = self.serialize_public_key(pkseed, expanded["pkey_y"])
-        secret_key = self.serialize_secret_key(
+        public_key = self._serialize_public_key(pkseed, expanded["pkey_y"])
+        secret_key = self._serialize_secret_key(
             skseed,
             pkseed,
             expanded["encoded_solution"],
             expanded["pkey_y"],
         )
         return public_key, secret_key
-
-    def serialize_public_key(self, pkey_seed: bytes, pkey_y: bytes) -> bytes:
+    
+    def get_seedpk(self, public_key: bytes) -> bytes:
+        return self._deserialize_public_key(public_key)[0]
+    
+    def get_y(self, public_key: bytes) -> bytes:
+        return self._deserialize_public_key(public_key)[1]
+    
+    # Internal helper methods for key serialization, expansion, and PRG initialization - Dependent on SDitH
+    def _serialize_public_key(self, pkey_seed: bytes, pkey_y: bytes) -> bytes:
         return pkey_seed + pkey_y
 
-    def deserialize_public_key(self, public_key: bytes) -> tuple[bytes, bytes]:
+    def _deserialize_public_key(self, public_key: bytes) -> tuple[bytes, bytes]:
         lam = self.params["lambda_bytes"]
         codim_bytes = self.params["rsd_codim_bytes"]
         expected = lam + codim_bytes
@@ -140,7 +148,7 @@ class SDitHOracle(MPCitHOracle):
             raise ValueError("invalid public key size for variant")
         return public_key[:lam], public_key[lam:]
 
-    def serialize_secret_key(
+    def _serialize_secret_key(
         self,
         skey_seed: bytes,
         pkey_seed: bytes,
@@ -148,16 +156,6 @@ class SDitHOracle(MPCitHOracle):
         pkey_y: bytes,
     ) -> bytes:
         return skey_seed + pkey_seed + skey_encoded_solution + pkey_y
-    
-    def get_seedpk(self, public_key: bytes) -> bytes:
-        return self.deserialize_public_key(public_key)[0]
-    
-    def get_seedsk(self, private_key: bytes) -> bytes:
-        lam = self.params["lambda_bytes"]
-        return private_key[:lam]
-    
-    def get_y(self, public_key: bytes) -> bytes:
-        return self.deserialize_public_key(public_key)[1]
 
     def _expand_instance_with_solution(self, skseed: bytes, pkseed: bytes) -> dict:
         h_rows = self._expand_h_from_pkseed(pkseed)

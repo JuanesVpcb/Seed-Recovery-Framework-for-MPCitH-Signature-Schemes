@@ -17,7 +17,7 @@ class MPCitHOracle(ABC):
         """
         pass
     
-    @abstractmethod
+    @abstractmethod 
     def expand(self, seeds: tuple[bytes, ...]) -> dict:
         """Expand the seed(s) according to scheme-specific requirements.
         
@@ -77,18 +77,6 @@ class MPCitHOracle(ABC):
             
         Returns:
             bytes: The extracted pkseed or relevant portion for key generation.
-        """
-        pass
-    
-    @abstractmethod
-    def get_seedsk(self, private_key: bytes) -> bytes:
-        """Deserialize the private key to extract the skseed and any other necessary components.
-        
-        Args:
-            private_key: The private key bytes to deserialize.
-            
-        Returns:
-            bytes: The extracted skseed or relevant portion for key generation.
         """
         pass
     

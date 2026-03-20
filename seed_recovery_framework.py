@@ -111,30 +111,35 @@ def option2(model_name: str, oracle: MPCitHOracle, clean: bytes) -> tuple[bytes,
             print(f"File {candidate_seed_f} does not contain a valid bytes-coded seed. Please check the file contents and try again.")
             return
     
-    noisy_candidate_seed = introduce_noise(seed, alpha, beta)
-    print(f"Noisy candidate seed: {noisy_candidate_seed.hex()}")
+    noisy_seed = introduce_noise(seed, alpha, beta)
+    print(f"Noisy candidate seed: {noisy_seed.hex()}")
     
     # Save the noisy candidate seed to a file for testing
     noisy_file = f"files/noisy_seeds/{model_name}_L{oracle.security_level}_noisy_seed_{alpha:.3f}_{beta:.2f}.pem"
     with open(noisy_file, "w") as noisy_seed_file:
-        noisy_seed_file.write(noisy_candidate_seed.hex())
+        noisy_seed_file.write(noisy_seed.hex())
         
-    return noisy_candidate_seed, noisy_file
+    return noisy_seed, noisy_file
 
-def option3(model_name: str, oracle: MPCitHOracle) -> bool:
+def option3(model_name: str, oracle: MPCitHOracle, candidate_seed: bytes, public_key: bytes) -> bool:
     """Tests a singular candidate seed against the oracle algorithm for the selected model and security level.
     
     Params:
         model_name: The name of the selected model (e.g., "SDITH").
         oracle: The instantiated oracle for the selected model and security level.
-        
+        candidate_seed: The candidate seed to test as bytes.
+        public_key: The public key to use for the test as bytes.
     Returns:
         A boolean indicating whether the candidate seed passes the test.
     """
     
-    # TODO: Implement the logic to test a candidate seed against the oracle algorithm for the selected model.
-    print("\nTesting a candidate seed against the oracle algorithm is not implemented yet.")
-    pass
+    seedpk = oracle.get_seedpk(public_key)  # Get the seedpk from the public key using the oracle's method
+    derived_pk, _ = oracle.keygen_from_seeds(candidate_seed, seedpk)  # Derive the keys from the candidate seed and seedpk
+    y_prime = oracle.get_y(derived_pk)  # Generate the proof using the oracle's proof method with the seedpk
+    y = oracle.get_y(public_key)  # Get the expected proof from the oracle using the public key
+    equal = (y_prime == y)  # Return whether the generated proof matches the expected proof
+    print(f"\nTesting candidate seed against the oracle for {model_name} {oracle.security_level}: {'PASSED' if equal else 'FAILED'}")
+    return equal
 
 def option4(model_name: str, oracle: MPCitHOracle) -> dict:
     """Runs the BBLM attack for the selected model and security level, returning the results as a dictionary.
@@ -228,7 +233,7 @@ def main() -> None:
                 history["noisy_seed"] = res[0]
                 history["noisy_seed_files"].append(res[1])
         elif operation_input == 3:
-            _ = option3(model_name, oracle)
+            _ = option3(model_name, oracle, history["noisy_seed"], history["pk"])
         elif operation_input == 4: 
             res = option4(model_name, oracle)
             if res is not None:
@@ -238,10 +243,11 @@ def main() -> None:
         else:
             print("\nInvalid operation selected. Please try again.")
             continue
-        
         print("\nOperation completed. Check the generated files in ./files/")
         
 if __name__ == "__main__":
     print("Welcome to the Seed Recovery Framework for MPCitH Signature Schemes!")
     print("If you want to exit at any point, press Ctrl+C.")
+    print("The oracle will remain the same for all operations, so you can generate seeds and",
+          "keys, introduce noise to the seeds, and test them against the same oracle instance.")
     main()
