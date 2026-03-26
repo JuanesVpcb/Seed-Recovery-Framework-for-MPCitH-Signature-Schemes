@@ -4,6 +4,10 @@ import matplotlib.pyplot as plt
 
 from abstract_oracle import MPCitHOracle
 from Schemes.sdith_algorithms import SDitHOracle
+from Schemes.perk_algorithms import PERKOracle
+from Schemes.ryde_algorithms import RYDEOracle
+from Schemes.mqom_algorithms import MQOMOracle
+from Schemes.mirath_algorithms import MirathOracle
 from helper_algorithms import introduce_noise, extract_seedpk_and_y, load_noisy_seeds_from_file, ranked_seed_candidates_from_noisy
 
 # Define constants for the different models
@@ -293,7 +297,10 @@ def main() -> None:
     while True:
         print("\nAvailable models:")
         print("\t1: SDITH")
-        print("\t(Working on... MIRATH, MQOM, PERK, RYDE)")
+        print("\t2: MIRATH")
+        print("\t3: MQOM")
+        print("\t4: PERK")
+        print("\t5: RYDE")
         model_input = int(input("Select the model to test: "))
         if model_input not in [SDITH, MIRATH, MQOM, PERK, RYDE]:
             print("Invalid model selected. Please try again.")
@@ -313,11 +320,24 @@ def main() -> None:
         if security_level in [1, 3, 5]: break
         else: print("Invalid security level selected. Please try again.")
     
-    # Instantiate the oracle for the selected model and security level (currently only SDITH supported)
+    # Instantiate the oracle for the selected model and security level
     oracle: MPCitHOracle = None
-    if model_input == SDITH: oracle = SDitHOracle(security_level=security_level, fast=True)
-    else:
-        print("Oracle generation for the selected model is not implemented yet.")
+    try:
+        if model_input == SDITH:
+            oracle = SDitHOracle(security_level=security_level, fast=True)
+        elif model_input == PERK:
+            oracle = PERKOracle(security_level=security_level, fast=True)
+        elif model_input == RYDE:
+            oracle = RYDEOracle(security_level=security_level, fast=True)
+        elif model_input == MQOM:
+            oracle = MQOMOracle(security_level=security_level)
+        elif model_input == MIRATH:
+            oracle = MirathOracle(security_level=security_level, fast=True)
+        else:
+            print("Oracle generation for the selected model is not implemented yet.")
+            return
+    except Exception as e:
+        print(f"Error instantiating oracle for {model_name}: {e}")
         return
 
     # ----------------------------- Operation selection -----------------------------
