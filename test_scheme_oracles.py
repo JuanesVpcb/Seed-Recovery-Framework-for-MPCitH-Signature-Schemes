@@ -12,6 +12,35 @@ sys.path.insert(0, framework_path)
 from Schemes.perk_algorithms import PERKOracle
 from Schemes.ryde_algorithms import RYDEOracle
 from Schemes.mirath_algorithms import MirathOracle
+from Schemes.sdith_algorithms import SDitHOracle
+
+# Test SDitH
+print("Testing SDitH Oracle...")
+for level in [1, 3, 5]:
+    try:
+        oracle = SDitHOracle(security_level=level)
+        print(f"  ✓ SDitH L{level} oracle instantiated successfully")
+        print(f"    - Lambda bits: {oracle.params['lambda_bits']}")
+        print(f"    - Lambda bytes: {oracle.params['lambda_bytes']}")
+        
+        # Test seed generation
+        skseed, pkseed = oracle.seeds()
+        print(f"    - Generated seeds: skseed={len(skseed)} bytes, pkseed={len(pkseed)} bytes")
+        
+        # Test expansion
+        expanded = oracle.expand((skseed, pkseed))
+        print(f"    - Expanded material keys: {list(expanded.keys())}")
+        
+        # Test proof
+        y = oracle.proof(expanded)
+        print(f"    - Proof y size: {len(y)} bytes")
+        
+        # Test keygen
+        pk, sk = oracle.keygen_from_seeds(skseed, pkseed)
+        print(f"    - Generated keys: pk={len(pk)} bytes, sk={len(sk)} bytes")
+        
+    except Exception as e:
+        print(f"  ✗ SDitH L{level} failed: {e}")
 
 # Test PERK
 print("Testing PERK Oracle...")
