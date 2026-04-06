@@ -1,5 +1,6 @@
 import os
 import json
+import math
 from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
 
@@ -27,6 +28,61 @@ _WORKER_BETA = None
 _WORKER_W = None
 _WORKER_MU = None
 _WORKER_MAX_CANDIDATES = None
+
+ADVERSARY_PROFILES = [
+    {"name": "average", "Btime": 2**30, "Bmemory": 2**30},
+    {"name": "strong", "Btime": 2**50, "Bmemory": 2**50},
+]
+
+# Cost parameters mirroring the paper-style budget model.
+CBASE = 2**5
+CBLOCK = 2**4
+CORACLE = 2**6
+
+
+def _estimate_budget_candidate_limit(
+    W: int,
+    w: int,
+    mu: int,
+    Btime: int,
+    Bmemory: int,
+    Cbase: int = CBASE,
+    Cblock: int = CBLOCK,
+    Coracle: int = CORACLE,
+    eta: int = 1,
+) -> int:
+    """Estimate candidate bound from paper-style time and memory budgets.
+
+    We keep the same structure as the reference model, but map it directly
+    to an executable candidate cap for this framework's ranked enumeration.
+    """
+    if w <= 0 or mu <= 1 or eta <= 0 or W % (eta * w) != 0:
+        return 1
+
+    xi = W // (eta * w)
+    per_candidate_time = Cbase + (mu * xi * Cblock) + Coracle
+    if per_candidate_time <= 0:
+        return 1
+
+    max_by_time = Btime // per_candidate_time
+    if max_by_time <= 0:
+        return 1
+
+    ceil_xi_log2_mu = math.ceil(xi * math.log2(mu))
+    mem_per_candidate = xi * ceil_xi_log2_mu
+    # Fixed memory terms, analogous to μ·W + ξ·μ·log2(Bmax)
+    # with Bmax approximated by the time-derived candidate bound.
+    mem_fixed = (mu * W) + (xi * mu * math.log2(max(2, max_by_time)))
+
+    if mem_per_candidate <= 0:
+        max_by_memory = max_by_time
+    else:
+        budget_left = Bmemory - mem_fixed
+        if budget_left <= 0:
+            return 1
+        max_by_memory = int(budget_left // mem_per_candidate)
+
+    return max(1, min(max_by_time, max_by_memory))
 
 
 # ================================= Internal Functions for BBLM Attack Worker Processes ==================================
@@ -190,7 +246,6 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
     alpha = 0.001
     w = 8
     mu = 16
-    max_candidates = 1000
     #while True:
     #    alpha = float(input("Enter alpha (0->1) used for noisy seed (default 0.001): ") or 0.001)
     #    if alpha < 0 or alpha > 1:
@@ -201,13 +256,12 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
     #while True:
     #    w = int(input("Enter chunk width w in bits (default 8): ") or 8)
     #    mu = int(input("Enter top-mu candidates per chunk (default 16): ") or 16)
-    #    max_candidates = int(input("Enter max seed candidates to test (default 1000): ") or 1000)
-    #    if w <= 0 or mu <= 0 or max_candidates <= 0:
-    #        print("w, mu, and max_candidates must be positive integers. Please try again.")
+    #    if w <= 0 or mu <= 0:
+    #        print("w and mu must be positive integers. Please try again.")
     #        continue
     #    break
     
-    print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level} (w={w}, mu={mu}, max={max_candidates}, alpha={alpha})...")
+    print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level} (w={w}, mu={mu}, alpha={alpha})...")
     
     # Get the beta values to test from the user, with validation and support for multiple comma-separated values
     beta_strings = "0.03, 0.05, 0.10, 0.15, 0.20, 0.25"
@@ -238,60 +292,122 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
         "alpha": alpha,
         "w": w,
         "mu": mu,
-        "max_candidates": max_candidates
+        "cost_model": {
+            "Cbase": CBASE,
+            "Cblock": CBLOCK,
+            "Coracle": CORACLE,
+        },
     }
-    beta_results = []
+    budget_profiles_results = []
         
     seedpk, y = extract_seedpk_and_y(oracle, public_key)
-    for beta in beta_values:
-        print(f"\nTesting beta={beta:.2f}...")
-        noisy_file = f"files/noisy_seeds/{model_name}_L{oracle.security_level}_{alpha:.3f}_{beta:.2f}.pem"
-        noisy_seeds = []
-        try:
-            noisy_seeds = load_noisy_seeds_from_file(noisy_file, oracle.params["lambda_bytes"])
-        except Exception as exc:
-            print(f"Could not read noisy seed file {noisy_file}: {exc}")
-            continue
+    W = oracle.params["lambda_bytes"] * 8
+    for profile in ADVERSARY_PROFILES:
+        Btime = profile["Btime"]
+        Bmemory = profile["Bmemory"]
+        candidate_limit = _estimate_budget_candidate_limit(
+            W=W,
+            w=w,
+            mu=mu,
+            Btime=Btime,
+            Bmemory=Bmemory,
+            Cbase=CBASE,
+            Cblock=CBLOCK,
+            Coracle=CORACLE,
+            eta=1,
+        )
+        print(
+            f"\nAdversary profile '{profile['name']}' with budgets "
+            f"Btime=2^{int(math.log2(Btime))}, Bmemory=2^{int(math.log2(Bmemory))} "
+            f"-> candidate_limit={candidate_limit}"
+        )
 
-        per_seed_results = {}
-        recoveries = 0
-        _initialize_bblm_worker(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, max_candidates)
+        beta_results = []
+        for beta in beta_values:
+            print(f"\nTesting beta={beta:.2f}...")
+            noisy_file = f"files/noisy_seeds/{model_name}_L{oracle.security_level}_{alpha:.3f}_{beta:.2f}.pem"
+            noisy_seeds = []
+            try:
+                noisy_seeds = load_noisy_seeds_from_file(noisy_file, oracle.params["lambda_bytes"])
+            except Exception as exc:
+                print(f"Could not read noisy seed file {noisy_file}: {exc}")
+                continue
 
-        worker_count = min(len(noisy_seeds), max(1, (os.cpu_count() or 2) - 1))
-        if worker_count <= 1:
-            for noisy_seed in noisy_seeds:
-                print(" + Testing seed: " + noisy_seed.hex())
-                recovered_hex, recovered = _run_bblm_on_noisy_seed(noisy_seed)
-                per_seed_results[recovered_hex] = recovered
-                if recovered:
-                    recoveries += 1
-        else:
-            print(f"   Using {worker_count} worker processes for this beta.")
-            with ProcessPoolExecutor(
-                max_workers=worker_count,
-                initializer=_initialize_bblm_worker,
-                initargs=(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, max_candidates),
-            ) as executor:
-                for recovered_hex, recovered in executor.map(_run_bblm_on_noisy_seed, noisy_seeds, chunksize=8):
+            per_seed_results = {}
+            recoveries = 0
+            _initialize_bblm_worker(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, candidate_limit)
+
+            worker_count = min(len(noisy_seeds), max(1, (os.cpu_count() or 2) - 1))
+            if worker_count <= 1:
+                for noisy_seed in noisy_seeds:
+                    print(" + Testing seed: " + noisy_seed.hex())
+                    recovered_hex, recovered = _run_bblm_on_noisy_seed(noisy_seed)
                     per_seed_results[recovered_hex] = recovered
                     if recovered:
                         recoveries += 1
+            else:
+                print(f"   Using {worker_count} worker processes for this beta.")
+                with ProcessPoolExecutor(
+                    max_workers=worker_count,
+                    initializer=_initialize_bblm_worker,
+                    initargs=(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, candidate_limit),
+                ) as executor:
+                    for recovered_hex, recovered in executor.map(_run_bblm_on_noisy_seed, noisy_seeds, chunksize=8):
+                        per_seed_results[recovered_hex] = recovered
+                        if recovered:
+                            recoveries += 1
 
-        seeds_processed = len(noisy_seeds)
-        recovery_probability = (recoveries / seeds_processed) if seeds_processed > 0 else 0.0
-        beta_results.append({
-            "beta": beta,
-            "seeds_processed": seeds_processed,
-            "recoveries": recoveries,
-            "recovery_probability": recovery_probability,
-            "per_seed_results": per_seed_results,
+            seeds_processed = len(noisy_seeds)
+            recovery_probability = (recoveries / seeds_processed) if seeds_processed > 0 else 0.0
+            beta_results.append({
+                "beta": beta,
+                "seeds_processed": seeds_processed,
+                "recoveries": recoveries,
+                "recovery_probability": recovery_probability,
+                "candidate_limit": candidate_limit,
+                "per_seed_results": per_seed_results,
+            })
+            print(
+                f"beta={beta:.2f}: recovered {recoveries}/{seeds_processed} seeds "
+                f"(p={recovery_probability:.4f})"
+            )
+
+        budget_profiles_results.append({
+            "profile": profile["name"],
+            "Btime": Btime,
+            "Bmemory": Bmemory,
+            "candidate_limit": candidate_limit,
+            "beta_results": beta_results,
         })
+
+    results["budget_profiles"] = budget_profiles_results
+
+    # Print a compact per-profile summary table.
+    print("\n================= BBLM PROFILE SUMMARY =================")
+    print(f"{'Profile':<10} {'Bt':<8} {'Bm':<8} {'N_limit':<12} {'Seeds':<10} {'Recov':<10} {'P_avg':<10} {'P_best':<10}")
+    for profile_res in budget_profiles_results:
+        profile_name = profile_res["profile"]
+        bt_log = int(math.log2(profile_res["Btime"]))
+        bm_log = int(math.log2(profile_res["Bmemory"]))
+        n_limit = profile_res["candidate_limit"]
+
+        beta_res = profile_res.get("beta_results", [])
+        total_seeds = sum(br.get("seeds_processed", 0) for br in beta_res)
+        total_recov = sum(br.get("recoveries", 0) for br in beta_res)
+        p_avg = (total_recov / total_seeds) if total_seeds > 0 else 0.0
+        p_best = max((br.get("recovery_probability", 0.0) for br in beta_res), default=0.0)
+
         print(
-            f"beta={beta:.2f}: recovered {recoveries}/{seeds_processed} seeds "
-            f"(p={recovery_probability:.4f})"
+            f"{profile_name:<10} "
+            f"{'2^' + str(bt_log):<8} "
+            f"{'2^' + str(bm_log):<8} "
+            f"{n_limit:<12d} "
+            f"{total_seeds:<10d} "
+            f"{total_recov:<10d} "
+            f"{p_avg:<10.4f} "
+            f"{p_best:<10.4f}"
         )
-        
-    results["beta_results"] = beta_results
+    print("========================================================\n")
     
     os.makedirs("files/bblm", exist_ok=True)
     with open(f"files/bblm/{model_name}_L{oracle.security_level}_recovery.json", "w") as f:
@@ -324,14 +440,39 @@ def option4(model_name: str, oracle: MPCitHOracle) -> None:
     # TODO: Add more detailed plots, such as recovery probability distributions in a box plot with max values, quarters and outliers
     # per beta, as well as compiling from multiple runs.
     plt.figure(figsize=(10, 6))
-    plt.plot(
-        [br["beta"] for br in results["beta_results"]],
-        [br["recovery_probability"] for br in results["beta_results"]],
-        marker="o"
-    )
-    plt.title(f"BBLM Attack Results for {model_name} L{oracle.security_level}, " +
-              f"alpha={results['alpha']}, w={results['w']}, mu={results['mu']}, " +
-              f"max. candidates={results['max_candidates']}")
+    if "budget_profiles" in results:
+        for profile in results["budget_profiles"]:
+            beta_results = profile.get("beta_results", [])
+            if not beta_results:
+                continue
+            label = (
+                f"{profile.get('profile', 'profile')} "
+                f"(Bt=2^{int(math.log2(profile['Btime']))}, "
+                f"Bm=2^{int(math.log2(profile['Bmemory']))}, "
+                f"N={profile.get('candidate_limit', 0)})"
+            )
+            plt.plot(
+                [br["beta"] for br in beta_results],
+                [br["recovery_probability"] for br in beta_results],
+                marker="o",
+                label=label,
+            )
+        plt.legend()
+        plt.title(
+            f"BBLM Budget-Aware Results for {model_name} L{oracle.security_level}, "
+            f"alpha={results['alpha']}, w={results['w']}, mu={results['mu']}"
+        )
+    else:
+        # Backward compatibility with previous single-profile outputs.
+        plt.plot(
+            [br["beta"] for br in results["beta_results"]],
+            [br["recovery_probability"] for br in results["beta_results"]],
+            marker="o"
+        )
+        plt.title(
+            f"BBLM Attack Results for {model_name} L{oracle.security_level}, "
+            f"alpha={results['alpha']}, w={results['w']}, mu={results['mu']}"
+        )
     plt.xlabel("Beta")
     plt.ylabel("Recovery Probability")
     plt.grid(True)
