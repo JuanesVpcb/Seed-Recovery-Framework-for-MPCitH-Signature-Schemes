@@ -4,6 +4,8 @@ import math
 from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
 
+from bitarray import bitarray
+
 from abstract_oracle import MPCitHOracle
 from Schemes.sdith_algorithms import SDitHOracle
 from Schemes.perk_algorithms import PERKOracle
@@ -11,6 +13,14 @@ from Schemes.ryde_algorithms import RYDEOracle
 from Schemes.mqom_algorithms import MQOMOracle
 from Schemes.mirath_algorithms import MirathOracle
 from helper_algorithms import introduce_noise, extract_seedpk_and_y, load_noisy_seeds_from_file, ranked_seed_candidates_from_noisy
+from BBLMAlgorithms.MonteCarlo import (
+    build_posteriors_from_tilde,
+    create,
+    findOptimalB2,
+    generate_candidates_trimmed,
+    getMaximumWeight,
+    getMinimumWeight,
+)
 
 # Define constants for the different models
 SDITH = 1
@@ -19,15 +29,10 @@ MQOM = 3
 PERK = 4
 RYDE = 5
 
-
-_WORKER_ORACLE = None
-_WORKER_SEEDPK = None
-_WORKER_Y = None
-_WORKER_ALPHA = None
-_WORKER_BETA = None
-_WORKER_W = None
-_WORKER_MU = None
-_WORKER_MAX_CANDIDATES = None
+DEFAULT_ALPHA = 0.001
+DEFAULT_W = 8
+DEFAULT_MU = 16
+DEFAULT_BETAS = [0.03, 0.05, 0.10, 0.15, 0.20, 0.25]
 
 ADVERSARY_PROFILES = [
     {"name": "average", "Btime": 2**30, "Bmemory": 2**30},
@@ -40,52 +45,17 @@ CBLOCK = 2**4
 CORACLE = 2**6
 
 
-def _estimate_budget_candidate_limit(
-    W: int,
-    w: int,
-    mu: int,
-    Btime: int,
-    Bmemory: int,
-    Cbase: int = CBASE,
-    Cblock: int = CBLOCK,
-    Coracle: int = CORACLE,
-    eta: int = 1,
-) -> int:
-    """Estimate candidate bound from paper-style time and memory budgets.
-
-    We keep the same structure as the reference model, but map it directly
-    to an executable candidate cap for this framework's ranked enumeration.
-    """
-    if w <= 0 or mu <= 1 or eta <= 0 or W % (eta * w) != 0:
-        return 1
-
-    xi = W // (eta * w)
-    per_candidate_time = Cbase + (mu * xi * Cblock) + Coracle
-    if per_candidate_time <= 0:
-        return 1
-
-    max_by_time = Btime // per_candidate_time
-    if max_by_time <= 0:
-        return 1
-
-    ceil_xi_log2_mu = math.ceil(xi * math.log2(mu))
-    mem_per_candidate = xi * ceil_xi_log2_mu
-    # Fixed memory terms, analogous to μ·W + ξ·μ·log2(Bmax)
-    # with Bmax approximated by the time-derived candidate bound.
-    mem_fixed = (mu * W) + (xi * mu * math.log2(max(2, max_by_time)))
-
-    if mem_per_candidate <= 0:
-        max_by_memory = max_by_time
-    else:
-        budget_left = Bmemory - mem_fixed
-        if budget_left <= 0:
-            return 1
-        max_by_memory = int(budget_left // mem_per_candidate)
-
-    return max(1, min(max_by_time, max_by_memory))
+_WORKER_ORACLE = None
+_WORKER_SEEDPK = None
+_WORKER_Y = None
+_WORKER_ALPHA = None
+_WORKER_BETA = None
+_WORKER_W = None
+_WORKER_MU = None
+_WORKER_BTIME = None
+_WORKER_BMEMORY = None
 
 
-# ================================= Internal Functions for BBLM Attack Worker Processes ==================================
 def _build_oracle(model_name: str, security_level: int) -> MPCitHOracle:
     if model_name == "SDITH":
         return SDitHOracle(security_level=security_level, fast=True)
@@ -100,36 +70,135 @@ def _build_oracle(model_name: str, security_level: int) -> MPCitHOracle:
     raise ValueError(f"Unknown model name: {model_name}")
 
 
-def _initialize_bblm_worker(model_name: str, security_level: int, seedpk: bytes, y: bytes, alpha: float, beta: float, w: int, mu: int, max_candidates: int) -> None:
-    global _WORKER_ORACLE, _WORKER_SEEDPK, _WORKER_Y, _WORKER_ALPHA, _WORKER_BETA, _WORKER_W, _WORKER_MU, _WORKER_MAX_CANDIDATES
+def _initialize_option3_worker(
+    model_name: str,
+    security_level: int,
+    public_key: bytes,
+    alpha: float,
+    beta: float,
+    w: int,
+    mu: int,
+    Btime: int,
+    Bmemory: int,
+) -> None:
+    global _WORKER_ORACLE, _WORKER_SEEDPK, _WORKER_Y
+    global _WORKER_ALPHA, _WORKER_BETA, _WORKER_W, _WORKER_MU
+    global _WORKER_BTIME, _WORKER_BMEMORY
+
     _WORKER_ORACLE = _build_oracle(model_name, security_level)
-    _WORKER_SEEDPK = seedpk
-    _WORKER_Y = y
+    _WORKER_SEEDPK, _WORKER_Y = extract_seedpk_and_y(_WORKER_ORACLE, public_key)
     _WORKER_ALPHA = alpha
     _WORKER_BETA = beta
     _WORKER_W = w
     _WORKER_MU = mu
-    _WORKER_MAX_CANDIDATES = max_candidates
+    _WORKER_BTIME = Btime
+    _WORKER_BMEMORY = Bmemory
 
 
-def _run_bblm_on_noisy_seed(noisy_seed: bytes) -> tuple[str, bool]:
-    ranked_candidates = ranked_seed_candidates_from_noisy(
+def _process_noisy_seed_for_option3(noisy_seed: bytes) -> tuple[str, bool, int]:
+    candidate_limit = _budget_candidate_limit_from_model_prediction(
         noisy_seed=noisy_seed,
         alpha=_WORKER_ALPHA,
         beta=_WORKER_BETA,
         w=_WORKER_W,
         mu=_WORKER_MU,
-        max_candidates=_WORKER_MAX_CANDIDATES,
+        Btime=_WORKER_BTIME,
+        Bmemory=_WORKER_BMEMORY,
+        eta=1,
     )
 
     recovered = False
-    for candidate_seed in ranked_candidates:
+    candidate_seeds = ranked_seed_candidates_from_noisy(
+        noisy_seed,
+        alpha=_WORKER_ALPHA,
+        beta=_WORKER_BETA,
+        w=_WORKER_W,
+        mu=_WORKER_MU,
+        max_candidates=candidate_limit,
+    )
+    for candidate_seed in candidate_seeds:
         derived_pk, _ = _WORKER_ORACLE.keygen_from_seeds(candidate_seed, _WORKER_SEEDPK)
         if _WORKER_ORACLE.get_y(derived_pk) == _WORKER_Y:
             recovered = True
             break
 
-    return noisy_seed.hex(), recovered
+    return noisy_seed.hex(), recovered, candidate_limit
+
+
+def _parse_bblm_custom_input(raw: str) -> tuple[float, int, int, list[float]]:
+    """Parse custom BBLM params from 'alpha;w;mu;beta1,beta2,...' format."""
+    parts = [p.strip() for p in raw.split(";")]
+    if len(parts) != 4:
+        raise ValueError("Expected format: alpha;w;mu;beta1,beta2,...")
+
+    alpha = float(parts[0])
+    w = int(parts[1])
+    mu = int(parts[2])
+    betas = [float(v.strip()) for v in parts[3].split(",") if v.strip()]
+
+    if not (0 <= alpha <= 1):
+        raise ValueError("alpha must be in [0,1]")
+    if w <= 0 or mu <= 0:
+        raise ValueError("w and mu must be positive")
+    if not betas:
+        raise ValueError("at least one beta is required")
+    for beta in betas:
+        if not (0 <= beta <= 1):
+            raise ValueError("all beta values must be in [0,1]")
+
+    return alpha, w, mu, betas
+
+
+def _budget_candidate_limit_from_model_prediction(
+    noisy_seed: bytes,
+    alpha: float,
+    beta: float,
+    w: int,
+    mu: int,
+    Btime: int,
+    Bmemory: int,
+    eta: int = 1,
+    scale: int = 10000,
+) -> int:
+    """Derive a candidate budget from Model_Prediction.py using Btime/Bmemory."""
+    s_tilde = bitarray()
+    s_tilde.frombytes(noisy_seed)
+    s_tilde = s_tilde[: len(noisy_seed) * 8]
+    W = len(s_tilde)
+
+    if W == 0 or W % w != 0 or eta <= 0:
+        return 1
+
+    posterior = build_posteriors_from_tilde(s_tilde, alpha, beta)
+    blocks = generate_candidates_trimmed(posterior, W, w, eta, mu, scale=scale)
+    if not blocks:
+        return 1
+
+    Bmin = int(getMinimumWeight(blocks, scale))
+    Bmax = int(getMaximumWeight(blocks, scale))
+    if Bmax <= Bmin:
+        return 1
+
+    B2 = findOptimalB2(
+        blocks,
+        Bmin,
+        Bmax,
+        W,
+        w,
+        eta,
+        mu,
+        Btime,
+        Bmemory,
+        CBASE,
+        CBLOCK,
+        CORACLE,
+        scale,
+    )
+    if B2 is None or B2 <= Bmin:
+        return 1
+
+    matrix = create(blocks, Bmin, B2, W, w, eta, mu, scale)
+    return max(1, int(matrix[0][0]))
 
 
 # =================================== User Interface for Testing the Algorithms ====================================
@@ -242,40 +311,26 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
         oracle: The instantiated oracle for the selected model and security level.
     """
     
-    # Get the parameters for the BBLM attack from the user, with defaults and validation
-    alpha = 0.001
-    w = 8
-    mu = 16
-    #while True:
-    #    alpha = float(input("Enter alpha (0->1) used for noisy seed (default 0.001): ") or 0.001)
-    #    if alpha < 0 or alpha > 1:
-    #        print("alpha must be in [0,1]. Please try again.")
-    #        continue
-    #    break
-
-    #while True:
-    #    w = int(input("Enter chunk width w in bits (default 8): ") or 8)
-    #    mu = int(input("Enter top-mu candidates per chunk (default 16): ") or 16)
-    #    if w <= 0 or mu <= 0:
-    #        print("w and mu must be positive integers. Please try again.")
-    #        continue
-    #    break
+    # Keep parameter selection compact: one defaults question plus one optional custom line.
+    use_defaults = (input("Use defaults? (y/n): ").strip().lower() or "y")
+    if use_defaults in ("y", "yes"):
+        alpha = DEFAULT_ALPHA
+        w = DEFAULT_W
+        mu = DEFAULT_MU
+        beta_values = list(DEFAULT_BETAS)
+        print(
+            f"Using defaults from BBLM configuration: alpha={alpha}, w={w}, "
+            f"mu={mu}, betas={beta_values}"
+        )
+    else:
+        try:
+            raw = input("Enter alpha;w;mu;beta1,beta2,... : ").strip()
+            alpha, w, mu, beta_values = _parse_bblm_custom_input(raw)
+        except ValueError as exc:
+            print(f"Invalid custom BBLM parameters: {exc}")
+            return
     
     print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level} (w={w}, mu={mu}, alpha={alpha})...")
-    
-    # Get the beta values to test from the user, with validation and support for multiple comma-separated values
-    beta_strings = "0.03, 0.05, 0.10, 0.15, 0.20, 0.25"
-    betas = input("Enter beta values to test, separated by commas (default: 0.03, 0.05, 0.10, 0.15, 0.20, 0.25): ") or beta_strings
-    beta_values = []
-    for beta_str in betas.split(","):
-        try:
-            beta = float(beta_str.strip())
-            if beta < 0 or beta > 1:
-                print(f"beta value {beta} is out of range [0,1]. Skipping this value.")
-                continue
-            beta_values.append(beta)
-        except ValueError:
-            print(f"Invalid beta value '{beta_str}'. Please enter numeric values. Skipping this value.")
     
     # Read the public key from the file for the selected model and security level, with validation
     pk_file = f"files/keys/{model_name}_L{oracle.security_level}_pk.pem"
@@ -305,21 +360,9 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
     for profile in ADVERSARY_PROFILES:
         Btime = profile["Btime"]
         Bmemory = profile["Bmemory"]
-        candidate_limit = _estimate_budget_candidate_limit(
-            W=W,
-            w=w,
-            mu=mu,
-            Btime=Btime,
-            Bmemory=Bmemory,
-            Cbase=CBASE,
-            Cblock=CBLOCK,
-            Coracle=CORACLE,
-            eta=1,
-        )
         print(
             f"\nAdversary profile '{profile['name']}' with budgets "
-            f"Btime=2^{int(math.log2(Btime))}, Bmemory=2^{int(math.log2(Bmemory))} "
-            f"-> candidate_limit={candidate_limit}"
+            f"Btime=2^{int(math.log2(Btime))}, Bmemory=2^{int(math.log2(Bmemory))}"
         )
 
         beta_results = []
@@ -334,49 +377,78 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
                 continue
 
             per_seed_results = {}
+            per_seed_candidate_limits = {}
             recoveries = 0
-            _initialize_bblm_worker(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, candidate_limit)
 
             worker_count = min(len(noisy_seeds), max(1, (os.cpu_count() or 2) - 1))
             if worker_count <= 1:
+                _initialize_option3_worker(
+                    model_name,
+                    oracle.security_level,
+                    public_key,
+                    alpha,
+                    beta,
+                    w,
+                    mu,
+                    Btime,
+                    Bmemory,
+                )
                 for noisy_seed in noisy_seeds:
                     print(" + Testing seed: " + noisy_seed.hex())
-                    recovered_hex, recovered = _run_bblm_on_noisy_seed(noisy_seed)
-                    per_seed_results[recovered_hex] = recovered
+                    noisy_hex, recovered, candidate_limit = _process_noisy_seed_for_option3(noisy_seed)
+                    per_seed_results[noisy_hex] = recovered
+                    per_seed_candidate_limits[noisy_hex] = candidate_limit
                     if recovered:
                         recoveries += 1
             else:
                 print(f"   Using {worker_count} worker processes for this beta.")
                 with ProcessPoolExecutor(
                     max_workers=worker_count,
-                    initializer=_initialize_bblm_worker,
-                    initargs=(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, candidate_limit),
+                    initializer=_initialize_option3_worker,
+                    initargs=(
+                        model_name,
+                        oracle.security_level,
+                        public_key,
+                        alpha,
+                        beta,
+                        w,
+                        mu,
+                        Btime,
+                        Bmemory,
+                    ),
                 ) as executor:
-                    for recovered_hex, recovered in executor.map(_run_bblm_on_noisy_seed, noisy_seeds, chunksize=8):
-                        per_seed_results[recovered_hex] = recovered
+                    for noisy_hex, recovered, candidate_limit in executor.map(
+                        _process_noisy_seed_for_option3,
+                        noisy_seeds,
+                        chunksize=8,
+                    ):
+                        per_seed_results[noisy_hex] = recovered
+                        per_seed_candidate_limits[noisy_hex] = candidate_limit
                         if recovered:
                             recoveries += 1
 
             seeds_processed = len(noisy_seeds)
             recovery_probability = (recoveries / seeds_processed) if seeds_processed > 0 else 0.0
+            candidate_limits = list(per_seed_candidate_limits.values())
+            candidate_limit_avg = (sum(candidate_limits) / len(candidate_limits)) if candidate_limits else 0.0
             beta_results.append({
                 "beta": beta,
                 "seeds_processed": seeds_processed,
                 "recoveries": recoveries,
                 "recovery_probability": recovery_probability,
-                "candidate_limit": candidate_limit,
+                "candidate_limit": candidate_limit_avg,
+                "candidate_limits": per_seed_candidate_limits,
                 "per_seed_results": per_seed_results,
             })
             print(
                 f"beta={beta:.2f}: recovered {recoveries}/{seeds_processed} seeds "
-                f"(p={recovery_probability:.4f})"
+                f"(p={recovery_probability:.4f}, N_avg={candidate_limit_avg:.1f})"
             )
 
         budget_profiles_results.append({
             "profile": profile["name"],
             "Btime": Btime,
             "Bmemory": Bmemory,
-            "candidate_limit": candidate_limit,
             "beta_results": beta_results,
         })
 
@@ -384,24 +456,28 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
 
     # Print a compact per-profile summary table.
     print("\n================= BBLM PROFILE SUMMARY =================")
-    print(f"{'Profile':<10} {'Bt':<8} {'Bm':<8} {'N_limit':<12} {'Seeds':<10} {'Recov':<10} {'P_avg':<10} {'P_best':<10}")
+    print(f"{'Profile':<10} {'Bt':<8} {'Bm':<8} {'N_avg':<12} {'Seeds':<10} {'Recov':<10} {'P_avg':<10} {'P_best':<10}")
     for profile_res in budget_profiles_results:
         profile_name = profile_res["profile"]
         bt_log = int(math.log2(profile_res["Btime"]))
         bm_log = int(math.log2(profile_res["Bmemory"]))
-        n_limit = profile_res["candidate_limit"]
 
         beta_res = profile_res.get("beta_results", [])
         total_seeds = sum(br.get("seeds_processed", 0) for br in beta_res)
         total_recov = sum(br.get("recoveries", 0) for br in beta_res)
         p_avg = (total_recov / total_seeds) if total_seeds > 0 else 0.0
         p_best = max((br.get("recovery_probability", 0.0) for br in beta_res), default=0.0)
+        avg_limit = (
+            sum(br.get("candidate_limit", 0.0) for br in beta_res) / len(beta_res)
+            if beta_res
+            else 0.0
+        )
 
         print(
             f"{profile_name:<10} "
             f"{'2^' + str(bt_log):<8} "
             f"{'2^' + str(bm_log):<8} "
-            f"{n_limit:<12d} "
+            f"{avg_limit:<12.1f} "
             f"{total_seeds:<10d} "
             f"{total_recov:<10d} "
             f"{p_avg:<10.4f} "
@@ -445,11 +521,16 @@ def option4(model_name: str, oracle: MPCitHOracle) -> None:
             beta_results = profile.get("beta_results", [])
             if not beta_results:
                 continue
+            avg_limit = (
+                sum(br.get("candidate_limit", 0.0) for br in beta_results) / len(beta_results)
+                if beta_results
+                else 0.0
+            )
             label = (
                 f"{profile.get('profile', 'profile')} "
                 f"(Bt=2^{int(math.log2(profile['Btime']))}, "
                 f"Bm=2^{int(math.log2(profile['Bmemory']))}, "
-                f"N={profile.get('candidate_limit', 0)})"
+                f"N_avg={avg_limit:.1f})"
             )
             plt.plot(
                 [br["beta"] for br in beta_results],

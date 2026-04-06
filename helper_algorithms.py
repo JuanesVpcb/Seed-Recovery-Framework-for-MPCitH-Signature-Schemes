@@ -1,8 +1,27 @@
-import heapq
-import math
+import os
 import random
 
 from abstract_oracle import MPCitHOracle
+
+_BBLM_MODULES_READY = False
+
+def _ensure_bblm_modules_loaded() -> None:
+    """Load BBLM-Algorithms modules from the local repository path."""
+    global _BBLM_MODULES_READY
+    if _BBLM_MODULES_READY:
+        return
+
+    bblm_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "BBLMAlgorithms")
+    if not os.path.isdir(bblm_dir):
+        raise FileNotFoundError("BBLMAlgorithms directory not found in repository root")
+
+    # Import lazily to keep startup lightweight.
+    global bitarray, initialize, build_posteriors_from_tilde, generate_candidates_trimmed
+    from bitarray import bitarray
+    from BBLMAlgorithms.okeanode import initialize
+    from BBLMAlgorithms.MonteCarlo import generate_candidates_trimmed, build_posteriors_from_tilde
+
+    _BBLM_MODULES_READY = True
 
 # ================================== Model-Agnostic Algorithms for Key Recovery ==================================
 def introduce_noise(seed: bytes, alpha: float, beta: float) -> bytes:
@@ -23,51 +42,8 @@ def introduce_noise(seed: bytes, alpha: float, beta: float) -> bytes:
         noisy_bytes[byte_index] = noisy_byte
     return bytes(noisy_bytes)
 
-# ----------------------- Helper Functions for BBLM-style Reconstruction from Noisy Seeds -----------------------
-def _bytes_to_bits(data: bytes) -> list[int]:
-    bits = []
-    for byte in data:
-        for i in range(7, -1, -1):
-            bits.append((byte >> i) & 1)
-    return bits
 
-def _bits_to_bytes(bits: list[int]) -> bytes:
-    if len(bits) % 8 != 0:
-        raise ValueError("bit length must be a multiple of 8")
-
-    out = bytearray()
-    for i in range(0, len(bits), 8):
-        byte = 0
-        for b in bits[i : i + 8]:
-            byte = (byte << 1) | (b & 1)
-        out.append(byte)
-    return bytes(out)
-
-def _build_posteriors_from_noisy_bits(observed_bits: list[int], alpha: float, beta: float) -> list[tuple[float, float]]:
-    posteriors = []
-    for obs in observed_bits:
-        if obs == 0:
-            denom = (1.0 - alpha) + beta
-            posteriors.append(((1.0 - alpha) / denom, beta / denom))
-        else:
-            denom = alpha + (1.0 - beta)
-            posteriors.append((alpha / denom, (1.0 - beta) / denom))
-    return posteriors
-
-def _top_chunk_candidates(post_chunk: list[tuple[float, float]], mu: int) -> list[tuple[float, list[int]]]:
-    w = len(post_chunk)
-    all_candidates = []
-    log_cache = [( -math.log(p0), -math.log(p1) ) for p0, p1 in post_chunk]
-    for mask in range(1 << w):
-        bits = [((mask >> shift) & 1) for shift in range(w - 1, -1, -1)]
-        neg_log_score = 0.0
-        for idx, bit in enumerate(bits):
-            neg_log_score += log_cache[idx][bit]
-        all_candidates.append((neg_log_score, bits))
-
-    all_candidates.sort(key=lambda x: x[0])
-    return all_candidates[:mu]
-
+# ----------------------- Connector Function for BBLM-style Reconstruction from Noisy Seeds -----------------------
 def ranked_seed_candidates_from_noisy(
     noisy_seed: bytes,
     alpha: float,
@@ -76,47 +52,31 @@ def ranked_seed_candidates_from_noisy(
     mu: int,
     max_candidates: int,
 ) -> list[bytes]:
-    observed_bits = _bytes_to_bits(noisy_seed)
-    if len(observed_bits) % w != 0:
+    _ensure_bblm_modules_loaded()
+    observed_bits = bitarray()
+    observed_bits.frombytes(noisy_seed)
+    observed_bits = observed_bits[: len(noisy_seed) * 8]
+    W = len(observed_bits)
+
+    if W % w != 0:
         raise ValueError("w must divide the noisy seed bit-length")
 
-    posteriors = _build_posteriors_from_noisy_bits(observed_bits, alpha, beta)
-    chunk_lists = []
-    for start in range(0, len(observed_bits), w):
-        chunk_lists.append(_top_chunk_candidates(posteriors[start : start + w], mu))
+    # Use the reference BBLM candidate-generation logic (MonteCarlo module).
+    posteriors = build_posteriors_from_tilde(observed_bits, alpha, beta)
+    # eta=1 keeps the same per-chunk composition shape used by the framework.
+    chunk_lists = generate_candidates_trimmed(posteriors, W, w, 1, mu, scale=10000.0)
 
-    num_chunks = len(chunk_lists)
-    start_indices = tuple(0 for _ in range(num_chunks))
-    start_score = sum(chunk_lists[i][0][0] for i in range(num_chunks))
-    heap: list[tuple[float, tuple[int, ...]]] = [(start_score, start_indices)]
-    visited = {start_indices}
+    if not chunk_lists:
+        return []
 
+    # Use OKEA from BBLM-Algorithms to enumerate global top candidates.
+    okea_tree = initialize(chunk_lists, 0, len(chunk_lists) - 1, scale=10000.0)
     out = []
-    while heap and len(out) < max_candidates:
-        score, indices = heapq.heappop(heap)
-
-        candidate_bits = []
-        for chunk_id, cand_idx in enumerate(indices):
-            candidate_bits.extend(chunk_lists[chunk_id][cand_idx][1])
-        out.append(_bits_to_bytes(candidate_bits))
-
-        for chunk_id in range(num_chunks):
-            next_idx = indices[chunk_id] + 1
-            if next_idx >= len(chunk_lists[chunk_id]):
-                continue
-            new_indices = list(indices)
-            new_indices[chunk_id] = next_idx
-            new_indices_t = tuple(new_indices)
-            if new_indices_t in visited:
-                continue
-
-            next_score = score
-            next_score -= chunk_lists[chunk_id][indices[chunk_id]][0]
-            next_score += chunk_lists[chunk_id][next_idx][0]
-
-            visited.add(new_indices_t)
-            heapq.heappush(heap, (next_score, new_indices_t))
-
+    for j in range(max_candidates):
+        cand = okea_tree.getCandidate(j)
+        if cand is None:
+            break
+        out.append(cand.bits.tobytes())
     return out
 
 

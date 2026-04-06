@@ -1,263 +1,112 @@
-# Seed-Recovery-Framework-for-MPCitH-Signature-Schemes
+# Seed Recovery Framework for MPCitH Signature Schemes
 
-A Python framework for analyzing seed recovery in post-quantum cryptographic (PQC) signature schemes based on the MPCitH (Multi-Party Computation in the Head) paradigm. This project implements deterministic key generation from user-controlled seeds and includes an oracle algorithm to test whether candidate seeds produce valid key pairs.
+This repository is a research framework for seed-recovery experiments against MPC-in-the-Head signature schemes. It combines:
 
-**Purpose:** Test the security of MPCitH-based signature schemes against seed recovery attacks by simulating Code-Based Analysis (CBA) bit-flip attacks. This is a research tool for security analysis of PQC implementations ahead of standardization.
+- scheme-specific oracle/keygen bridges and wrappers,
+- a noisy-seed generation workflow,
+- a budget-aware BBLM recovery pipeline,
+- and plotting/reporting utilities.
 
-> **Disclaimer:** We do not promote unethical attacks or seed recovery via unauthorized means. This framework is strictly for controlled security evaluation in research and development environments.
+The code is intended for controlled academic/security evaluation.
 
----
+## Current Status
 
-## Table of Contents
+- Models wired in CLI: SDitH, Mirath, MQOM, PERK, RYDE
+- Security levels: 1, 3, 5
+- BBLM path: budget-aware profiles using time and memory constraints
+- Parallel execution: multiprocessing over noisy seeds during recovery
+- BBLM core connection: uses modules from BBLM-Algorithms (OKEA/candidate enumeration stack)
 
-- [Features](#features)
-- [Requirements](#requirements)
-- [Setup & Installation](#setup--installation)
-  - [1. Clone the Repository](#1-clone-the-repository)
-  - [2. Set Up Local SDitH Library](#2-set-up-local-sdith-library)
-  - [3. Build the Bridge](#3-build-the-bridge)
-  - [4. Run the Framework](#4-run-the-framework)
-- [Architecture & Folder Structure](#architecture--folder-structure)
-- [Usage](#usage)
-- [Implemented Features](#implemented-features)
-- [License & Attribution](#license--attribution)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## Features
-
-- **Deterministic Key Generation:** Generate SDitH key pairs from arbitrary bit seeds without internal randomness.
-- **Multi-Level Support:** Support for NIST security levels L1 (128-bit), L3 (192-bit), and L5 (256-bit).
-- **Oracle Algorithm:** Verify candidate seeds against known public keys to test seed recovery feasibility.
-- **Noise Injection:** Introduce controlled bit-flip noise to seeds (CBA simulation).
-- **Vendor-Friendly:** All required cryptographic code is vendored locally—no external absolute paths required.
-- **GitHub-Ready:** Fully self-contained repository structure suitable for version control and distribution.
-
----
-
-## Requirements
-
-### System
-
-- **macOS** (Darwin), **Linux**, or **Windows** with WSL2
-- **CMake** 3.10+
-- **GCC/Clang** C compiler with C99 support
-- **Python** 3.7+ (for the framework CLI)
-- **Bash** shell (for setup and build scripts)
-
-### Build Dependencies
-
-```bash
-# macOS (using Homebrew)
-brew install cmake gcc
-
-# Ubuntu/Debian
-sudo apt-get install cmake build-essential
-
-# Fedora
-sudo dnf install cmake gcc
-```
-
----
-
-## Setup & Installation
-
-### 1. Clone the Repository
-
-```bash
-git clone <repository-url>
-cd Seed-Recovery-Framework-for-MPCitH-Signature-Schemes
-```
-
-### 2. Set Up Local SDitH Library
-
-The framework requires the SDitH reference implementation source code to build the C bridge locally. You must first point the setup script to your external copy of the SDitH-v2 reference implementation.
-
-#### Option A: Using Relative Path (Default)
-
-If you have `SDitH-v2` installed one level above your repository:
-
-```bash
-bash setup_sdith_local.sh -v cat1_fast
-```
-
-#### Option B: Using Absolute Path
-
-If your SDitH-v2 reference is elsewhere:
-
-```bash
-bash setup_sdith_local.sh \
-  -p /absolute/path/to/SDitH-v2/Reference_Implementation \
-  -v cat1_fast
-```
-
-#### Option C: Vendor Multiple Variants
-
-To include all security levels you may choose one by one which to use from the 6 available (CAT1_FAST, CAT3_FAST, CAT5_FAST, CAT1_SHORT, CAT3_SHORT, CAT5_SHORT):
-
-```bash
-bash setup_sdith_local.sh -v cat1_fast
-bash setup_sdith_local.sh -v cat3_fast
-bash setup_sdith_local.sh -v cat5_fast
-```
-
-**What this does:**
-
-- Creates local `SDitH-Library/sdith_cat{1,3,5}_{fast,short}/` folders
-- Copies all required source files (src/, lib/aes/, lib/sha3/) from the external reference
-- Generates a local `CMakeLists.txt` configured for in-repo building
-- Creates variant-specific build scripts
-
-### 3. Build the Bridge
-
-After setup, compile the C bridge for your chosen variant:
-
-```bash
-bash build_sdith_[variant].sh
-```
-
-**Build output:**
-
-- **macOS:** `SDitH-Library/sdith_cat1_fast/build/libsdith_keygen.dylib`
-- **Linux:** `SDitH-Library/sdith_cat1_fast/build/libsdith_keygen.so`
-- **Windows:** `SDitH-Library/sdith_cat1_fast/build/libsdith_keygen.dll`
-- **Python Interface:** Automatically detects and loads the built library via ctypes
-
-### 4. Run the Framework
-
-```bash
-python3 oracle_algorithm.py
-```
-
-You will be presented with an interactive menu to select:
-
-1. Cryptographic model (currently SDitH; others in progress)
-2. Security level (L1, L3, L5)
-3. Operation (generate keys, inject noise, test candidates)
-
----
-
-## Architecture & Folder Structure
+## Repository Layout
 
 ```text
 .
-├── README.md                          # This file
-├── oracle_algorithm.py                # Main Python framework and CLI
-├── setup_sdith_local.sh               # Setup script (with -p, -v flags)
-├── build_sdith_*.sh                   # Build scripts per variant
+├── seed_recovery_framework.py      # Main CLI (options 1..5)
+├── helper_algorithms.py            # Noise + connectors to BBLM-Algorithms
+├── abstract_oracle.py              # Oracle interface contract
+├── Schemes/                        # Scheme-specific oracle implementations
+│   ├── sdith_algorithms.py
+│   ├── perk_algorithms.py
+│   ├── ryde_algorithms.py
+│   ├── mqom_algorithms.py
+│   └── mirath_algorithms.py
+├── SchemeBridges/
+│   └── sdith_library_bridge.py     # ctypes bridge for SDitH library wrapper
 ├── SDitH-Library/
-│   ├── sdith_cat1_fast/               # Vendored CAT1 variant
-│   │   ├── src/                       # Core SDitH implementation (29 files)
-│   │   ├── lib/
-│   │   │   ├── aes/                   # AES/Rijndael cryptography
-│   │   │   └── sha3/                  # Keccak/SHA-3 hashing
-│   │   ├── wrapper/
-│   │   │   ├── sdith_keygen_bridge.c  # Keygen-only C bridge
-│   │   │   └── sdith_keygen_bridge.h  # Bridge header
-│   │   ├── CMakeLists.txt             # Local build config
-│   │   └── build/                     # Compiled artifacts (generated)
-│   │       └── libsdith_keygen.{dylib,so}
-│   ├── sdith_cat3_fast/               # (Optional) CAT3 variant
-│   └── sdith_cat5_fast/               # (Optional) CAT5 variant
-├── SDITH_LICENSE.txt                  # SDitH Apache-2.0 License copy
-└── [other model implementations TBD]
+│   └── wrapper/
+│       ├── sdith_keygen_bridge.c
+│       └── sdith_keygen_bridge.h
+├── BBLMAlgorithms/                 # Original BBLM algorithm modules used by connector
+│   ├── candidate.py
+│   ├── extended_candidate.py
+│   ├── enumeration_utils.py
+│   ├── basic_enumerator.py
+│   ├── okeanode.py
+│   └── ...
+├── files/                          # Generated keys/noisy seeds/results/plots
+└── setup_sdith_local.sh            # SDitH local setup helper
 ```
-
----
 
 ## Usage
 
-Run the framework without arguments to enter interactive mode:
+Run:
 
 ```bash
-python3 oracle_algorithm.py
+python3 seed_recovery_framework.py
 ```
 
-**Menu Flow:**
+Menu flow:
 
-```text
-Welcome to the Seed Recovery Framework for MPCitH Signature Schemes!
+1. Select model
+2. Select security level (1, 3, or 5)
+3. Select operation:
+   - 1: generate seeds/keys
+   - 2: generate noisy seeds
+   - 3: run BBLM recovery (budget-aware)
+   - 4: plot BBLM results
+   - 5: test a single candidate seed
 
-Available models:
-    1: SDITH
-    (Working on... MIRATH, MQOM, PERK, RYDE)
-Select the model to test (0 to exit): 1
+## BBLM Recovery Profiles
 
-Selected model: SDITH
+The recovery run evaluates two adversary profiles:
 
-Select the operation:
-    0: Exit the program
-    1: Generate random seed and keys
-    2: Introduce noise to a candidate seed with CBA bit-flip probability values
-    3: Test a singular candidate seed
-Enter the operation: 1
+- Average adversary: Btime = 2^30, Bmemory = 2^30
+- Strong adversary: Btime = 2^50, Bmemory = 2^50
 
-Select the security level (L1, L3, L5)
-Enter the security level (write 1, 3, or 5): 1
+The candidate exploration bound is derived from these budgets (instead of a fixed max-candidates input), and results are saved per profile in:
 
-Generated seeds and keys for SDITH 1:
-skseed: 287496...(128-bit integer)...
-pkseed: 125739...(128-bit integer)...
-public_key: a1f3b5....(hex-encoded public key bytes)....
-private_key: 8f2c9d....(hex-encoded secret key bytes)....
-```
+- files/bblm/<`MODEL`>_L<`LEVEL`>_recovery.json
 
-**Output Files (created in working directory):**
+Each run prints a compact per-profile summary table with total seeds, recoveries, average success probability, and best per-beta probability.
 
-- `SDITH_L1_skseed.pem` — Secret key seed (decimal integer)
-- `SDITH_L1_pkseed.pem` — Public key seed (decimal integer)
-- `SDITH_L1_public_key.pem` — Public key (hex-encoded bytes)
-- `SDITH_L1_private_key.pem` — Secret key (hex-encoded bytes)
+## Notes on Dependencies
 
----
+- Python 3.10+ recommended.
+- The BBLM-Algorithms modules use bitarray.
+- SDitH bridge compilation depends on your local toolchain (C compiler/CMake) when rebuilding wrappers.
 
-## Implemented Features
+## Acknowledgements
 
-### ✅ Completed
+This framework builds on the work of multiple research groups and submission teams.
 
-### SDitH Model
+### BBLM Recovery Algorithms
 
-- [x] Deterministic key generation from arbitrary pkseed + skseed
-- [x] Support for L1 (CAT1_FAST), L3 (CAT3_FAST), L5 (CAT5_FAST)
-- [x] Oracle algorithm for seed candidacy testing
-- [x] Binary-safe key serialization (hex format)
-- [x] Programmatic API + interactive CLI
+- Integrated from the BBLM algorithm codebase included in this repository under BBLM-Algorithms.
+- Credit to the authors and contributors of the original BBLM recovery framework and related thesis/paper artifacts.
 
-#### Noise Injection
+### Signature Scheme Implementations and Submissions
 
-- [x] Random bit-flip function with controllable alpha, beta probabilities
-- [x] Integration with CBA attack simulation
+- SDitH: based on the SDitH submission/reference materials included in this project structure.
+- PERK submitters (from submission README): Najwa Aaraj, Slim Bettaieb, Loic Bidoux, Alessandro Budroni, Victor Dyseryn, Andre Esser, Thibauld Feneuil, Philippe Gaborit, Mukul Kulkarni, Victor Mateu, Marco Palumbi, Lucas Perin, Matthieu Rivain, Jean-Pierre Tillich, Keita Xagawa.
+- RYDE submitters (from submission README): Nicolas Aragon, Magali Bardet, Loic Bidoux, Jesus-Javier Chi-Dominguez, Victor Dyseryn, Thibauld Feneuil, Philippe Gaborit, Antoine Joux, Romaric Neveu, Matthieu Rivain, Jean-Pierre Tillich, Adrien Vincotte.
+- Mirath submitters (from submission README): Gora Adj, Nicolas Aragon, Stefano Barbero, Magali Bardet, Emanuele Bellini, Loic Bidoux, Jesus-Javier Chi-Dominguez, Victor Dyseryn, Andre Esser, Thibauld Feneuil, Philippe Gaborit, Romaric Neveu, Matthieu Rivain, Luis Rivera-Zamarripa, Carlo Sanna, Jean-Pierre Tillich, Javier Verbel, Floyd Zweydinger.
+- MQOM2: based on the MQOM2 submission package (including Reference_Implementation_Python) included in the project environment.
 
-#### Framework Infrastructure
+Please refer to each scheme's original package documentation, cover sheets, and license files for definitive authorship, ownership, and licensing terms.
 
-- [x] Local C bridge (sdith_keygen_bridge.c)
-- [x] CMake build system (in-repo, no external paths)
-- [x] Automated setup/build scripts with variant selection
+## Disclaimer
 
-### 🚧 In Progress
-
-- [ ] MIRATH model implementation
-- [ ] MQOM model implementation
-- [ ] PERK model implementation
-- [ ] RYDE model implementation
-- [ ] Option 3: Test candidate seed against oracle
-- [ ] Option 4: BBLM attack implementation
-
-### 📋 Future Work
-
-- [ ] Batch seed testing (parallel oracle checks)
-- [ ] Statistical analysis tools for recovery feasibility
-- [ ] Graphical UI for key generation workflow
-- [ ] Support for hardened parameter sets
-
----
-
-## License & Attribution
-
-### SDitH Reference Implementation
-
-This framework **includes vendored source code** from the **SDitH-v2 reference implementation**, which is distributed under the **Apache License 2.0**.
+This code is for authorized testing and research only. Do not use it against systems or data without explicit permission.
 
 **SDitH License Notice:**
 

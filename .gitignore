@@ -33,3 +33,6 @@ env/
 *.swo
 *~
 .DS_Store
+
+# Legacy experiment outputs
+resultados_v6/
