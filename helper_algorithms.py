@@ -9,19 +9,18 @@ def introduce_noise(seed: bytes, alpha: float, beta: float) -> bytes:
     """Introduces noise to the seed based on the specified alpha and beta parameters.
     Each bit of every byte is independently flipped: 0->1 with probability alpha,
     1->0 with probability beta."""
-    noisy_bytes = []
-    for byte in seed:
+    rand = random.random
+    noisy_bytes = bytearray(len(seed))
+    for byte_index, byte in enumerate(seed):
         noisy_byte = 0
-        for i in range(7, -1, -1): # iterate bits MSB to LSB
-            bit = (byte >> i) & 1
-            
-            # Flip the bit according to the probabilities alpha and beta
-            if bit == 0: noisy_bit = 1 if random.random() < alpha else 0
-            else: noisy_bit = 0 if random.random() < beta else 1
-            
-            # Construct the noisy byte by shifting and adding the noisy bit
+        for bit_index in range(7, -1, -1):  # iterate bits MSB to LSB
+            bit = (byte >> bit_index) & 1
+            if bit == 0:
+                noisy_bit = 1 if rand() < alpha else 0
+            else:
+                noisy_bit = 0 if rand() < beta else 1
             noisy_byte = (noisy_byte << 1) | noisy_bit
-        noisy_bytes.append(noisy_byte)
+        noisy_bytes[byte_index] = noisy_byte
     return bytes(noisy_bytes)
 
 # ----------------------- Helper Functions for BBLM-style Reconstruction from Noisy Seeds -----------------------
@@ -58,13 +57,12 @@ def _build_posteriors_from_noisy_bits(observed_bits: list[int], alpha: float, be
 def _top_chunk_candidates(post_chunk: list[tuple[float, float]], mu: int) -> list[tuple[float, list[int]]]:
     w = len(post_chunk)
     all_candidates = []
+    log_cache = [( -math.log(p0), -math.log(p1) ) for p0, p1 in post_chunk]
     for mask in range(1 << w):
         bits = [((mask >> shift) & 1) for shift in range(w - 1, -1, -1)]
         neg_log_score = 0.0
         for idx, bit in enumerate(bits):
-            p0, p1 = post_chunk[idx]
-            prob = p1 if bit == 1 else p0
-            neg_log_score += -math.log(prob)
+            neg_log_score += log_cache[idx][bit]
         all_candidates.append((neg_log_score, bits))
 
     all_candidates.sort(key=lambda x: x[0])

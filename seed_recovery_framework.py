@@ -1,5 +1,6 @@
 import os
 import json
+from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
 
 from abstract_oracle import MPCitHOracle
@@ -16,6 +17,63 @@ MIRATH = 2
 MQOM = 3
 PERK = 4
 RYDE = 5
+
+
+_WORKER_ORACLE = None
+_WORKER_SEEDPK = None
+_WORKER_Y = None
+_WORKER_ALPHA = None
+_WORKER_BETA = None
+_WORKER_W = None
+_WORKER_MU = None
+_WORKER_MAX_CANDIDATES = None
+
+
+# ================================= Internal Functions for BBLM Attack Worker Processes ==================================
+def _build_oracle(model_name: str, security_level: int) -> MPCitHOracle:
+    if model_name == "SDITH":
+        return SDitHOracle(security_level=security_level, fast=True)
+    if model_name == "PERK":
+        return PERKOracle(security_level=security_level, fast=True)
+    if model_name == "RYDE":
+        return RYDEOracle(security_level=security_level, fast=True)
+    if model_name == "MQOM":
+        return MQOMOracle(security_level=security_level)
+    if model_name == "MIRATH":
+        return MirathOracle(security_level=security_level, fast=True)
+    raise ValueError(f"Unknown model name: {model_name}")
+
+
+def _initialize_bblm_worker(model_name: str, security_level: int, seedpk: bytes, y: bytes, alpha: float, beta: float, w: int, mu: int, max_candidates: int) -> None:
+    global _WORKER_ORACLE, _WORKER_SEEDPK, _WORKER_Y, _WORKER_ALPHA, _WORKER_BETA, _WORKER_W, _WORKER_MU, _WORKER_MAX_CANDIDATES
+    _WORKER_ORACLE = _build_oracle(model_name, security_level)
+    _WORKER_SEEDPK = seedpk
+    _WORKER_Y = y
+    _WORKER_ALPHA = alpha
+    _WORKER_BETA = beta
+    _WORKER_W = w
+    _WORKER_MU = mu
+    _WORKER_MAX_CANDIDATES = max_candidates
+
+
+def _run_bblm_on_noisy_seed(noisy_seed: bytes) -> tuple[str, bool]:
+    ranked_candidates = ranked_seed_candidates_from_noisy(
+        noisy_seed=noisy_seed,
+        alpha=_WORKER_ALPHA,
+        beta=_WORKER_BETA,
+        w=_WORKER_W,
+        mu=_WORKER_MU,
+        max_candidates=_WORKER_MAX_CANDIDATES,
+    )
+
+    recovered = False
+    for candidate_seed in ranked_candidates:
+        derived_pk, _ = _WORKER_ORACLE.keygen_from_seeds(candidate_seed, _WORKER_SEEDPK)
+        if _WORKER_ORACLE.get_y(derived_pk) == _WORKER_Y:
+            recovered = True
+            break
+
+    return noisy_seed.hex(), recovered
 
 
 # =================================== User Interface for Testing the Algorithms ====================================
@@ -197,26 +255,27 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
 
         per_seed_results = {}
         recoveries = 0
+        _initialize_bblm_worker(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, max_candidates)
 
-        for noisy_seed in noisy_seeds:
-            print(" + Testing seed: " + noisy_seed.hex())
-            ranked_candidates = ranked_seed_candidates_from_noisy(
-                noisy_seed=noisy_seed,
-                alpha=alpha,
-                beta=beta,
-                w=w,
-                mu=mu,
-                max_candidates=max_candidates,
-            )
-
-            recovered = False
-            for candidate_seed in ranked_candidates:
-                derived_pk, _ = oracle.keygen_from_seeds(candidate_seed, seedpk)
-                if oracle.get_y(derived_pk) == y:
-                    recovered = True
+        worker_count = min(len(noisy_seeds), max(1, (os.cpu_count() or 2) - 1))
+        if worker_count <= 1:
+            for noisy_seed in noisy_seeds:
+                print(" + Testing seed: " + noisy_seed.hex())
+                recovered_hex, recovered = _run_bblm_on_noisy_seed(noisy_seed)
+                per_seed_results[recovered_hex] = recovered
+                if recovered:
                     recoveries += 1
-                    break
-            per_seed_results[noisy_seed.hex()] = recovered
+        else:
+            print(f"   Using {worker_count} worker processes for this beta.")
+            with ProcessPoolExecutor(
+                max_workers=worker_count,
+                initializer=_initialize_bblm_worker,
+                initargs=(model_name, oracle.security_level, seedpk, y, alpha, beta, w, mu, max_candidates),
+            ) as executor:
+                for recovered_hex, recovered in executor.map(_run_bblm_on_noisy_seed, noisy_seeds, chunksize=8):
+                    per_seed_results[recovered_hex] = recovered
+                    if recovered:
+                        recoveries += 1
 
         seeds_processed = len(noisy_seeds)
         recovery_probability = (recoveries / seeds_processed) if seeds_processed > 0 else 0.0
