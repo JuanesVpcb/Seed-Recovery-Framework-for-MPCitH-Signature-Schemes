@@ -33,7 +33,3 @@ env/
 *.swo
 *~
 .DS_Store
-
-# Generated files
-*.pem
-files/

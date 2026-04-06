@@ -320,6 +320,9 @@ def option4(model_name: str, oracle: MPCitHOracle) -> None:
 
     # Plot the recovery probability against beta values using matplotlib, with appropriate labels and title based on the model, 
     # security level, and parameters used in the BBLM attack
+    
+    # TODO: Add more detailed plots, such as recovery probability distributions in a box plot with max values, quarters and outliers
+    # per beta, as well as compiling from multiple runs.
     plt.figure(figsize=(10, 6))
     plt.plot(
         [br["beta"] for br in results["beta_results"]],
@@ -332,6 +335,10 @@ def option4(model_name: str, oracle: MPCitHOracle) -> None:
     plt.xlabel("Beta")
     plt.ylabel("Recovery Probability")
     plt.grid(True)
+    
+    os.makedirs("files/figures", exist_ok=True)
+    plt.savefig(f"files/figures/{model_name}_L{oracle.security_level}_recovery_plot.png")
+    plt.show()
     
 def option5(oracle: MPCitHOracle, candidate_seed: bytes, public_key: bytes) -> bool:
     """Tests a singular candidate seed against the oracle algorithm for the selected model and security level.
@@ -406,7 +413,7 @@ def main() -> None:
         print("\t1: Generate random seed and keys")
         print("\t2: Intrduce noise to a candidate seed with CBA bit-flip probability values")
         print("\t3: Run the BBLM attack")
-        print("\t4: (Working on...) Graph results for multiple candidate seeds and noise levels")
+        print("\t4: Graph results for multiple candidate seeds and noise levels")
         print("\t5: Test a singular candidate seed")
         operation_input = int(input("Enter the operation: "))
         
