@@ -29,13 +29,15 @@ MQOM = 3
 PERK = 4
 RYDE = 5
 
+# Use defaults from BBLM configuration for ease of testing, but allow custom input for flexibility.
+# These are based on the values reported in the BBLM paper.
 DEFAULT_ALPHA = 0.001
-DEFAULT_W = 8
-DEFAULT_MU = 16
+DEFAULT_W = 4
+DEFAULT_MU = 64
+DEFAULT_ETA = 2
 DEFAULT_BETAS = [0.03, 0.05, 0.10, 0.15, 0.20, 0.25]
-
 ADVERSARY_PROFILES = [
-    {"name": "average", "Btime": 2**30, "Bmemory": 2**30},
+    {"name": "baseline", "Btime": 2**30, "Bmemory": 2**30},
     {"name": "strong", "Btime": 2**50, "Bmemory": 2**50},
 ]
 
@@ -52,6 +54,7 @@ _WORKER_ALPHA = None
 _WORKER_BETA = None
 _WORKER_W = None
 _WORKER_MU = None
+_WORKER_ETA = None
 _WORKER_BTIME = None
 _WORKER_BMEMORY = None
 
@@ -78,12 +81,13 @@ def _initialize_option3_worker(
     beta: float,
     w: int,
     mu: int,
+    eta: int,
     Btime: int,
     Bmemory: int,
 ) -> None:
     global _WORKER_ORACLE, _WORKER_SEEDPK, _WORKER_Y
     global _WORKER_ALPHA, _WORKER_BETA, _WORKER_W, _WORKER_MU
-    global _WORKER_BTIME, _WORKER_BMEMORY
+    global _WORKER_ETA, _WORKER_BTIME, _WORKER_BMEMORY
 
     _WORKER_ORACLE = _build_oracle(model_name, security_level)
     _WORKER_SEEDPK, _WORKER_Y = extract_seedpk_and_y(_WORKER_ORACLE, public_key)
@@ -91,6 +95,7 @@ def _initialize_option3_worker(
     _WORKER_BETA = beta
     _WORKER_W = w
     _WORKER_MU = mu
+    _WORKER_ETA = eta
     _WORKER_BTIME = Btime
     _WORKER_BMEMORY = Bmemory
 
@@ -104,7 +109,7 @@ def _process_noisy_seed_for_option3(noisy_seed: bytes) -> tuple[str, bool, int]:
         mu=_WORKER_MU,
         Btime=_WORKER_BTIME,
         Bmemory=_WORKER_BMEMORY,
-        eta=1,
+        eta=_WORKER_ETA,
     )
 
     recovered = False
@@ -114,6 +119,7 @@ def _process_noisy_seed_for_option3(noisy_seed: bytes) -> tuple[str, bool, int]:
         beta=_WORKER_BETA,
         w=_WORKER_W,
         mu=_WORKER_MU,
+        eta=_WORKER_ETA,
         max_candidates=candidate_limit,
     )
     for candidate_seed in candidate_seeds:
@@ -125,28 +131,31 @@ def _process_noisy_seed_for_option3(noisy_seed: bytes) -> tuple[str, bool, int]:
     return noisy_seed.hex(), recovered, candidate_limit
 
 
-def _parse_bblm_custom_input(raw: str) -> tuple[float, int, int, list[float]]:
-    """Parse custom BBLM params from 'alpha;w;mu;beta1,beta2,...' format."""
+def _parse_bblm_custom_input(raw: str) -> tuple[float, int, int, int, list[float]]:
+    """Parse custom BBLM params from 'alpha;w;mu;eta;beta1,beta2,...' format."""
     parts = [p.strip() for p in raw.split(";")]
-    if len(parts) != 4:
-        raise ValueError("Expected format: alpha;w;mu;beta1,beta2,...")
+    if len(parts) != 5:
+        raise ValueError("Expected format: alpha;w;mu;eta;beta1,beta2,...")
 
     alpha = float(parts[0])
     w = int(parts[1])
     mu = int(parts[2])
-    betas = [float(v.strip()) for v in parts[3].split(",") if v.strip()]
+    eta = int(parts[3])
+    betas = [float(v.strip()) for v in parts[4].split(",") if v.strip()]
 
     if not (0 <= alpha <= 1):
         raise ValueError("alpha must be in [0,1]")
     if w <= 0 or mu <= 0:
         raise ValueError("w and mu must be positive")
+    if eta <= 0:
+        raise ValueError("eta must be positive")
     if not betas:
         raise ValueError("at least one beta is required")
     for beta in betas:
         if not (0 <= beta <= 1):
             raise ValueError("all beta values must be in [0,1]")
 
-    return alpha, w, mu, betas
+    return alpha, w, mu, eta, betas
 
 
 def _budget_candidate_limit_from_model_prediction(
@@ -255,10 +264,12 @@ def option2(model_name: str, oracle: MPCitHOracle) -> None:
     #    print("Invalid beta or alpha value. Please enter a value between 0 and 1.")
         
     while True:
-        beta_string = "0.03, 0.05, 0.10, 0.15, 0.20, 0.25"
-        beta_values = input("Enter the beta (1 -> 0) values to use between 0 and 1 (default: 0.03, 0.05, 0.10, 0.15, 0.20, 0.25): ") or beta_string
+        beta_values = input("Enter the beta (1 -> 0) values to use between 0 and 1 (default: 0.03, 0.05, 0.10, 0.15, 0.20, 0.25): ")
         betas = []
-        for beta_str in beta_string.split(","):
+        if beta_values.strip() == "":
+            betas = DEFAULT_BETAS
+            break
+        for beta_str in beta_values.split(","):
             try:
                 beta_val = float(beta_str.strip())
                 if beta_val < 0 or beta_val > 1:
@@ -268,12 +279,14 @@ def option2(model_name: str, oracle: MPCitHOracle) -> None:
             except ValueError:
                 print(f"Invalid beta value '{beta_str}'. Please enter numeric values. Skipping this value.")
                 continue
-        break
+        if betas == []: print("No valid beta values entered. Please try again.")
+        else: break
     
-    sample_count = 100 # int(input("How many noisy seeds to generate with these parameters? (default: 100): ") or 100)
-    # while True:
-    #     if sample_count > 0: break
-    #     print("The number of noisy seeds must be a positive integer. Please try again.")
+    sample_count = int(input("How many noisy seeds to generate with these parameters? (default: 5): ") or 5)
+    while True:
+        if sample_count > 0: break
+        print("The number of noisy seeds must be a positive integer. Please try again.")
+        sample_count = int(input("How many noisy seeds to generate with these parameters? (default: 5): ") or 5)
 
     # Open the file containing the candidate seed to introduce noise to, with validation and default
     candidate_seed_f = input("\nEnter the name of the file with the seed to introduce noise to (blank for default): ")
@@ -317,20 +330,21 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
         alpha = DEFAULT_ALPHA
         w = DEFAULT_W
         mu = DEFAULT_MU
-        beta_values = list(DEFAULT_BETAS)
+        beta_values = DEFAULT_BETAS
+        eta = DEFAULT_ETA
         print(
             f"Using defaults from BBLM configuration: alpha={alpha}, w={w}, "
-            f"mu={mu}, betas={beta_values}"
+            f"mu={mu}, eta={eta}, betas={beta_values}"
         )
     else:
         try:
-            raw = input("Enter alpha;w;mu;beta1,beta2,... : ").strip()
-            alpha, w, mu, beta_values = _parse_bblm_custom_input(raw)
+            raw = input("Enter alpha;w;mu;eta;beta1,beta2,... : ").strip()
+            alpha, w, mu, eta, beta_values = _parse_bblm_custom_input(raw)
         except ValueError as exc:
             print(f"Invalid custom BBLM parameters: {exc}")
             return
     
-    print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level} (w={w}, mu={mu}, alpha={alpha})...")
+    print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level}...")
     
     # Read the public key from the file for the selected model and security level, with validation
     pk_file = f"files/keys/{model_name}_L{oracle.security_level}_pk.pem"
@@ -347,6 +361,7 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
         "alpha": alpha,
         "w": w,
         "mu": mu,
+        "eta": eta,
         "cost_model": {
             "Cbase": CBASE,
             "Cblock": CBLOCK,
@@ -354,9 +369,7 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
         },
     }
     budget_profiles_results = []
-        
-    seedpk, y = extract_seedpk_and_y(oracle, public_key)
-    W = oracle.params["lambda_bytes"] * 8
+    
     for profile in ADVERSARY_PROFILES:
         Btime = profile["Btime"]
         Bmemory = profile["Bmemory"]
@@ -390,16 +403,17 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
                     beta,
                     w,
                     mu,
+                    eta,
                     Btime,
                     Bmemory,
                 )
                 for noisy_seed in noisy_seeds:
-                    print(" + Testing seed: " + noisy_seed.hex())
                     noisy_hex, recovered, candidate_limit = _process_noisy_seed_for_option3(noisy_seed)
                     per_seed_results[noisy_hex] = recovered
                     per_seed_candidate_limits[noisy_hex] = candidate_limit
                     if recovered:
                         recoveries += 1
+                    print(f"\tProcessed seed {noisy_hex}...: recovered={recovered}")
             else:
                 print(f"   Using {worker_count} worker processes for this beta.")
                 with ProcessPoolExecutor(
@@ -413,6 +427,7 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
                         beta,
                         w,
                         mu,
+                        eta,
                         Btime,
                         Bmemory,
                     ),
@@ -424,6 +439,7 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
                     ):
                         per_seed_results[noisy_hex] = recovered
                         per_seed_candidate_limits[noisy_hex] = candidate_limit
+                        print(f"\tProcessed seed {noisy_hex}...: recovered={recovered}")
                         if recovered:
                             recoveries += 1
 
@@ -566,7 +582,6 @@ def option5(oracle: MPCitHOracle, candidate_seed: bytes, public_key: bytes) -> b
     """Tests a singular candidate seed against the oracle algorithm for the selected model and security level.
     
     Params:
-        model_name: The name of the selected model (e.g., "SDITH").
         oracle: The instantiated oracle for the selected model and security level.
         candidate_seed: The candidate seed to test as bytes.
         public_key: The public key to use for the test as bytes.

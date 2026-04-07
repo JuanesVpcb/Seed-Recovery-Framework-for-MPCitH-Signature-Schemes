@@ -50,6 +50,7 @@ def ranked_seed_candidates_from_noisy(
     beta: float,
     w: int,
     mu: int,
+    eta: int,
     max_candidates: int,
 ) -> list[bytes]:
     _ensure_bblm_modules_loaded()
@@ -64,7 +65,7 @@ def ranked_seed_candidates_from_noisy(
     # Use the reference BBLM candidate-generation logic (MonteCarlo module).
     posteriors = build_posteriors_from_tilde(observed_bits, alpha, beta)
     # eta=1 keeps the same per-chunk composition shape used by the framework.
-    chunk_lists = generate_candidates_trimmed(posteriors, W, w, 1, mu, scale=10000.0)
+    chunk_lists = generate_candidates_trimmed(posteriors, W, w, eta, mu, scale=10000.0)
 
     if not chunk_lists:
         return []
