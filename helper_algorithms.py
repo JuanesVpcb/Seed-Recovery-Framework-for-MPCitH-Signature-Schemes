@@ -1,6 +1,7 @@
 import os
 import random
 import math
+import gc
 
 from abstract_oracle import MPCitHOracle
 
@@ -74,8 +75,14 @@ def _beam_combine_blocks(blocks, max_candidates: int, per_block_cap: int | None 
         # Lower score is better; keep only top-k partial candidates.
         next_beam.sort(key=lambda x: x[0])
         beam = next_beam[:k]
+        # Explicitly drop the large temporary pool before next block.
+        del next_beam
 
-    return [bits.tobytes() for _, bits in beam[:k]]
+    result = [bits.tobytes() for _, bits in beam[:k]]
+    beam.clear()
+    # Large bitarrays become unreachable here; trigger a targeted collection.
+    gc.collect()
+    return result
 
 def _lightweight_ranked_candidates(
     noisy_seed: bytes,
@@ -164,12 +171,18 @@ def ranked_seed_candidates_from_noisy(
 
     P = build_posteriors_from_tilde(observed_bits, alpha, beta)
     chunk_lists = generate_candidates_trimmed(P, W, w, eta, mu)
-    if not chunk_lists: return []
+    del P
+    if not chunk_lists:
+        return []
 
     if mode == "beam":
-        return _beam_combine_blocks(chunk_lists, max_candidates, mu)
+        out = _beam_combine_blocks(chunk_lists, max_candidates, mu)
+        del chunk_lists
+        gc.collect()
+        return out
 
     out = []
+    okea_tree = None
     try:
         okea_tree = initialize(chunk_lists, 0, len(chunk_lists) - 1)
         for j in range(max_candidates):
@@ -180,6 +193,12 @@ def ranked_seed_candidates_from_noisy(
     except (OverflowError, MemoryError):
         # If full OKEA blows up, fallback to beam combiner.
         return _beam_combine_blocks(chunk_lists, max_candidates, mu)
+    finally:
+        # Ensure large tree/list structures are released promptly.
+        if okea_tree is not None:
+            del okea_tree
+        del chunk_lists
+        gc.collect()
 
     return out
 

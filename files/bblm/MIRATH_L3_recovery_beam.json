@@ -1,0 +1,153 @@
+{
+  "model": "MIRATH",
+  "security_level": 3,
+  "alpha": 0.001,
+  "b2_strategy": "d",
+  "candidate_mode": "beam",
+  "max_candidates_cap": 2048,
+  "cost_model": {
+    "Cbase": 32,
+    "Cblock": 16,
+    "Coracle": 64
+  },
+  "beta_results": [
+    {
+      "beta": 0.03,
+      "B2_star": 136560,
+      "B2_source": "static_default:W192_beta0.03",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 2,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "738aebc6ee3e54accbc0c58423a23382ccc62e62fc6a7a7a": false,
+        "3388ebc6e6bf54accbc0c1842ba23382ccc62c66fc6a7a7a": false,
+        "738aebc6eebf54accbc0c58423a23382ccc22e62fc4a7a7a": false,
+        "738aebc6eebf54accbc0c5842ba23382ccc62e66dc6a7a7a": true,
+        "638aebc6eebb548ccbc0c5842ba23382ccc62c66f46a7a5a": false,
+        "738aebc6eebf54accbc0c5842ba23382ccc42e66fc6a3a7a": true,
+        "738aebc6eebf54accbc0c5802ba23382ccc62e66f04a7a7a": false,
+        "738aebc6eebf54accbc085842ba23382ccc62a46fc6a7a7a": false,
+        "738a6bc6ee1f54accbc0c4842ba233828c462e66fc6a7a7a": false,
+        "730aebc6eebf54accbc0c5842b823382ccc62e66fc6a7a7a": false
+      }
+    },
+    {
+      "beta": 0.05,
+      "B2_star": 141080,
+      "B2_source": "static_default:W192_beta0.05",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "738aebc6eeb754accbc0c5842ba21382ccc62e66fc6a7a7a": false,
+        "738ae9c6cebf54accbc085842ba233824cc62e62f42a3a7a": false,
+        "538aebc6eefb50acc1c0c5842ba23382c8c62a66fc6a1a7a": false,
+        "738aebc6eebf54accac0c5842ba23b82ccc62e66bc4a7a5a": false,
+        "7382ebc4cebf542cc8c0c5842ba23382ccc62666fc4a7a7a": false,
+        "738aebc6eebf54accbc0c5842ba23302ccc62e667c6a7a7a": false,
+        "738aebc6acbf54accbc0c5842ba23382ccc62e66fc6a6a7a": false,
+        "338aebc6eebf54ac89c0c5842ba23382cc862e66fc627a72": false,
+        "738aebc6aebf54accbc0c5042ba03382ccc62e66fc627a7a": false,
+        "738aebc6ecbf542ccbc0c5842b8213828cc62e26fc6a7a7a": false
+      }
+    },
+    {
+      "beta": 0.1,
+      "B2_star": 175837,
+      "B2_source": "static_default:W192_beta0.10",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "528ae8c6eebe54accbc085842ba210824cc62e66bc6a2a7a": false,
+        "338a6bc4cebb54acc1c0c5842ba23382c8c60e66fc4a6a7a": false,
+        "728aeb864abf548ccbc0c5842ba231824cc42e66bc626a78": false,
+        "738aa9c6e6bf54a48bc085842ba21180ccc40c66fc62123a": false,
+        "730aebc4eebf542ccac0858429a233808cc62a66fc6a787a": false,
+        "638aebc6eebf54acc3c0c5842ba03382ccc62a66fc62787a": false,
+        "618aebc6eabf54acc3c0c5841ba03302c8c62e646c68727a": false,
+        "738aabc6eebf54accbc0858429223382ccc62e66fc4a7a7a": false,
+        "63826bc6eebf44accbc0c5842ba23380ccc22a66fc2a7a7a": false,
+        "738a69c6aebf54accac085840ba23382ccc62e669c0a1a7a": false
+      }
+    },
+    {
+      "beta": 0.15,
+      "B2_star": 218667,
+      "B2_source": "static_default:W192_beta0.15",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "7382ebc6e62e44acc9c0c5842ba23182c4c62e66dc6a7a3a": false,
+        "738aeb84e2bb54accbc0c5802ba0130244c22e66ec6a7a1a": false,
+        "738aebc6ecbb44acc9c0c5842b223382ccc62a66fc627278": false,
+        "738aebc26cbf408ccbc0c5842b8233824c062c66fc6a7a72": false,
+        "338a6b46ecb954accac081842ba23382ccc42866f42a727a": false,
+        "5388cbc68abb44a88bc0c5842ba03102cc860266dc622a58": false,
+        "6388e9c6aebf54acc9c0c5842ba23382ccc62e66ec6a725a": false,
+        "638ae3c6eebf50a8cb0085842b803382ccc42c26fc6a6a3a": false,
+        "718a6bc2eebf54ac8bc045042a823382ccc62466ec4a7a7a": false,
+        "338aebc6ae3954accbc0c5842ba22282ccc62a66bc6a7a5a": false
+      }
+    },
+    {
+      "beta": 0.2,
+      "B2_star": 284221,
+      "B2_source": "static_default:W192_beta0.20",
+      "w_used": 8,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "728aeb46ecb350a0c9c0c50029223382ccc20e648c2a7a0a": false,
+        "7388c8c6e697542cc340c4842aa23182cc422e64fc6a6a7a": false,
+        "538a6bc6cebf548c0ac045842ba23382ccc62e423c6a186a": false,
+        "638ae2c0aebe540cc9c0c5842ba01382c8862a04786a2a7a": false,
+        "738aeb82aeb554248ac0448429a223824cc62a66bc626a3a": false,
+        "718aca40eea754acc9c044842b22338244c62c66fc4a6a72": false,
+        "738aeb866eaf44acc940c1842b82138048462e66f8607a38": false,
+        "538ae9c6c69f54a448c0c1242b823382ccc40c626c6a726a": false,
+        "73806bc6ee9744ac8b40c0842b221382ccc62e26e86a3a5a": false,
+        "718a2306eebb548cca4045842ba033828c420e643c6a5a7a": false
+      }
+    },
+    {
+      "beta": 0.25,
+      "B2_star": 348805,
+      "B2_source": "static_default:W192_beta0.25",
+      "w_used": 16,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "7308eac6aebf500c0b00c4042ba21102cc462666bc6a5a7a": false,
+        "538ae9422e23148041c0c5842ba21380cc060e66e8627a6a": false,
+        "7108c980e63f50acc380408409a233800cc62a60742a223a": false,
+        "73826ac4a89f542c8b800584238012824c862646bc6a6272": false,
+        "428aebc2e6bd5020ca80c4042ba23382c4c626425c427a7a": false,
+        "7380c986649754ac4ac0c0842a22130288462e60bc48787a": false,
+        "518aebc4aebc5484ca8085042ba233824cc62864fc6a7a18": false,
+        "6208e2c6e2b954acc14085042a223202ccc22e646c62307a": false,
+        "718a8bc6e43b04880380c4042aa23280c8c60e66bc68325a": false,
+        "638a6bc4c69f14ac41c085842ba23282cc022e02986a7858": false
+      }
+    }
+  ]
+}

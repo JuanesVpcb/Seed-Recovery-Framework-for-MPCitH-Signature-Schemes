@@ -284,11 +284,11 @@ def option2(model_name: str, oracle: MPCitHOracle) -> None:
         if betas == []: print("No valid beta values entered. Please try again.")
         else: break
     
-    sample_count = int(input("How many noisy seeds to generate with these parameters? (default: 20): ") or 20)
+    sample_count = int(input("How many noisy seeds to generate with these parameters? (default: 10): ") or 10)
     while True:
         if sample_count > 0: break
         print("The number of noisy seeds must be a positive integer. Please try again.")
-        sample_count = int(input("How many noisy seeds to generate with these parameters? (default: 20): ") or 20)
+        sample_count = int(input("How many noisy seeds to generate with these parameters? (default: 10): ") or 10)
 
     # Open the file containing the candidate seed to introduce noise to, with validation and default
     candidate_seed_f = input("\nEnter the name of the file with the seed to introduce noise to (blank for default): ")
@@ -331,7 +331,6 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
     if use_defaults in ("y", "yes"):
         alpha = 0.001
         beta_values = DEFAULT_BETAS
-        print(f"Using defaults from BBLM configuration: alpha={alpha}, betas={beta_values}")
     else:
         try:
             raw = input("Enter alpha;w;mu;eta;beta1,beta2,... : ").strip()
@@ -362,16 +361,22 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
 
     if candidate_policy == "o":
         max_candidates_cap = 2 << 9
+        if oracle.security_level == 5: max_candidates_cap = 2 << 8
         candidate_mode = "okea"
     elif candidate_policy == "l":
         max_candidates_cap = 2 << 19
+        if oracle.security_level == 5: max_candidates_cap = 2 << 18
         candidate_mode = "lightweight"
     else:
-        max_candidates_cap = 2 << 13
+        max_candidates_cap = 2 << 10
+        if oracle.security_level == 5: max_candidates_cap = 2 << 9
         candidate_mode = "beam"
     
     print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level}...")
-    
+    print(f"   alpha={alpha}, betas={beta_values}")
+    print(f"   B2* strategy: {b2_mode} (manual B2*={manual_b2_star if manual_b2_star is not None else 'N/A'})")
+    print(f"   candidate_mode={candidate_mode}, max_candidates_cap={max_candidates_cap}")
+
     # Read the public key from the file for the selected model and security level, with validation
     pk_file = f"files/keys/{model_name}_L{oracle.security_level}_pk.pem"
     try:
@@ -484,7 +489,7 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
             per_seed_results[noisy_hex] = recovered
             per_seed_candidate_limits.append(candidate_limit)
             if recovered: recoveries += 1
-            print(f"      Processed seed ({noisy_hex}). Recovered? {recovered} in {(time_ns() - t_init) / 1e6:.3f}ms.")
+            print(f"      Processed seed ({noisy_hex}). Recovered? {recovered} in {(time_ns() - t_init) / 1e9:.3f}s.")
 
         seeds_processed = len(noisy_seeds)
         candidate_limit_avg = (sum(per_seed_candidate_limits) / len(per_seed_candidate_limits)) if per_seed_candidate_limits else 0.0
