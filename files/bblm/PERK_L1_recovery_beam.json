@@ -1,0 +1,153 @@
+{
+  "model": "PERK",
+  "security_level": 1,
+  "alpha": 0.001,
+  "b2_strategy": "d",
+  "candidate_mode": "beam",
+  "max_candidates_cap": 2048,
+  "cost_model": {
+    "Cbase": 32,
+    "Cblock": 16,
+    "Coracle": 64
+  },
+  "beta_results": [
+    {
+      "beta": 0.03,
+      "B2_star": 160480,
+      "B2_source": "static_default:W128_beta0.03",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 6,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "34d831629e2433e972e2bd77bd69d345": true,
+        "34d831629e24336972e2bdf7bd69d345": true,
+        "34d811629e2432e97262bdf7bd69d345": false,
+        "34d831629e2433e972e0bdf7bd69d345": true,
+        "34d831629e2433e950e2bdf7ad69d345": false,
+        "34d831629e2433e972e2a9f7bd69c345": false,
+        "34d831629e0433e972e2bdf7bd69d345": true,
+        "34d831621e2431e872c23df7bd69d345": false,
+        "34d831629e24336972e29df7bd69d345": true,
+        "34d831629e24336972e2adf7bd69d345": true
+      }
+    },
+    {
+      "beta": 0.05,
+      "B2_star": 156017,
+      "B2_source": "static_default:W128_beta0.05",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 2,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "34dc31629e2433e972e2bdf73d69d345": false,
+        "34d831229e2433e972e2bdf7bd69d345": true,
+        "34d831629e2433e972e2bdf7ad69d245": true,
+        "14d831629a2433e970e2b5e7b569d345": false,
+        "341831629e2413e970e2bdf79d69d345": false,
+        "34d831429e2433e972e0bdd7bd69d345": false,
+        "34d831629e2033e972e23df7b949d345": false,
+        "349831429e2433e972e2bdf7ad68d341": false,
+        "345831629a2412e972e2bdf5bd69d345": false,
+        "34d831629e2433e972e294f7bd29d345": false
+      }
+    },
+    {
+      "beta": 0.1,
+      "B2_star": 259095,
+      "B2_source": "static_default:W128_beta0.10",
+      "w_used": 16,
+      "mu_used": 16,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "34d83162962431a972e2bdb7bd48d345": false,
+        "045831629e2433e972e2bd779d699145": false,
+        "344811629e2431e952e2bdf73d299345": false,
+        "14d851421e2433c972e2bcf7bd68d245": false,
+        "34d831629e2433e970a2b4f7b549d341": false,
+        "24d821629a24336972e2bdf7bd29d345": false,
+        "34c831629e2433e972e2bdf7bd699345": false,
+        "34d811629e2023e932c2bdf7bd615345": false,
+        "34d821229e2033e97262bdf7bd69d245": false,
+        "345821621424336972e2bdf7bd49c345": false
+      }
+    },
+    {
+      "beta": 0.15,
+      "B2_star": 189709,
+      "B2_source": "static_default:W128_beta0.15",
+      "w_used": 4,
+      "mu_used": 32,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "30d021229e24128970e2bdf7b469d305": false,
+        "245831229e2432e972c0bdf78d685344": false,
+        "34d831629e2023c87262bdf3b969d345": false,
+        "34d831629a0413e852e2bdf7b969d140": false,
+        "24d831200e2030e95262b5f79d69d345": false,
+        "24d011629e2432a96222b5e7b441d345": false,
+        "34c831629e2423c95240bdf73d41c345": false,
+        "34c03160162433e950e2b9f5bc69d340": false,
+        "30d831629e2433e962e2bdf7ad69c245": false,
+        "14d831629e2432e852a2bdf7b569d341": false
+      }
+    },
+    {
+      "beta": 0.2,
+      "B2_star": 218178,
+      "B2_source": "static_default:W128_beta0.20",
+      "w_used": 4,
+      "mu_used": 32,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "34c83162982432e972e2add125694344": false,
+        "34d811629e2433c850e2b5f72d49d340": false,
+        "34d821428e2431e87222a9f7b561c144": false,
+        "34d021609a2413c96202b57739699345": false,
+        "349011629a2413a970a2bdb73d69d345": false,
+        "04982160822433e070c285e6ad69d345": false,
+        "24d820420e2433e970e2bdf71d689345": false,
+        "349811608c2433e172e2bdf7ac29d305": false,
+        "30d030629e2432e950c2ade7bd29c341": false,
+        "349030429c2413a17262bd67b4699005": false
+      }
+    },
+    {
+      "beta": 0.25,
+      "B2_star": 264118,
+      "B2_source": "static_default:W128_beta0.25",
+      "w_used": 8,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "34d831420224336932e295b5ad69d145": false,
+        "20c811621e2033e820c29df71929d145": false,
+        "305831229c0033e9502239779c690345": false,
+        "348831429000116052c29db7b5699100": false,
+        "30d800629c2432e932e2b8379c21d141": false,
+        "348830209624306172c2bdf2bc61d145": false,
+        "148831409a0423c012e219e6bd29d305": false,
+        "349031609a0433e9506224b79d49d004": false,
+        "244831221a0411e050a2b9f5bc69db45": false,
+        "340811229a2033297060b8d38949d345": false
+      }
+    }
+  ]
+}

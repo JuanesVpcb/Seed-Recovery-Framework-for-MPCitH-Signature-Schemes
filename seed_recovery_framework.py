@@ -58,12 +58,7 @@ DEFAULT_B2_PROFILES = {
     },
 }
 
-
-def _closest_supported_beta(beta: float) -> float:
-    """Map any beta to the closest default beta (e.g., 0.5 -> 0.25)."""
-    return min(DEFAULT_BETAS, key=lambda b: (abs(b - beta), b))
-
-
+# ============================== Core BBLM-style Seed Recovery Functions (Option 3) ==============================
 def _effective_profile_length_bits(model_name: str, oracle: MPCitHOracle) -> int:
     """Resolve the profile W used for default parameters.
 
@@ -76,15 +71,16 @@ def _effective_profile_length_bits(model_name: str, oracle: MPCitHOracle) -> int
     seed_bits = oracle.params["lambda_bytes"] * 8
     return min((128, 192, 256), key=lambda w: abs(w - seed_bits))
 
-
 def _get_default_b2_profile(
     model_name: str,
     oracle: MPCitHOracle,
     beta: float,
 ) -> tuple[dict, str]:
+    """Get the default B2* profile for the given model, oracle, and beta, based on static profiles
+    derived from Paper-Recovery-Seeds results."""
     W = _effective_profile_length_bits(model_name, oracle)
     W_key = min((128, 192, 256), key=lambda w: abs(w - W))
-    beta_key = _closest_supported_beta(beta)
+    beta_key = min(DEFAULT_BETAS, key=lambda b: (abs(b - beta), b))
 
     profile = DEFAULT_B2_PROFILES[W_key][beta_key].copy()
     source = f"static_default:W{W_key}_beta{beta_key:.2f}"
@@ -92,8 +88,7 @@ def _get_default_b2_profile(
         source += f"_from_beta{beta:.2f}"
     return profile, source
 
-
-def _process_noisy_seed_for_option3(
+def _process_noisy_seed(
     noisy_seed: bytes,
     alpha: float,
     beta: float,
@@ -151,7 +146,6 @@ def _parse_bblm_custom_input(raw: str) -> tuple[float, int, int, int, list[float
 
     return alpha, w, mu, eta, betas
 
-
 def _budget_candidate_limit_from_model_prediction(
     noisy_seed: bytes,
     alpha: float,
@@ -163,7 +157,9 @@ def _budget_candidate_limit_from_model_prediction(
     fixed_B2: int | None = None,
     max_candidates: int | None = None,
 ) -> int:
-    """Derive a candidate budget from Model_Prediction.py using Btime/Bmemory."""
+    """Derive a candidate budget from Model_Prediction.py using Btime/Bmemory.
+    
+    If fixed_B2 is provided, use it instead of optimizing B2* for each seed (faster, more stable)."""
     s_tilde = bitarray()
     s_tilde.frombytes(noisy_seed)
     s_tilde = s_tilde[: len(noisy_seed) * 8]
@@ -213,7 +209,7 @@ def _budget_candidate_limit_from_model_prediction(
 
 
 # =================================== User Interface for Testing the Algorithms ====================================
-def option1(model_name: str, oracle: MPCitHOracle) -> None:
+def generate_seeds(model_name: str, oracle: MPCitHOracle) -> None:
     """Generates seeds and keys for the selected model and security level, saves them to files, and returns them as a tuple.
     
     Params:
@@ -229,7 +225,7 @@ def option1(model_name: str, oracle: MPCitHOracle) -> None:
         print("Verification failed. The generated proof did not match the expected value.")
         return
     
-    pk, sk = oracle.keygen_from_seeds(skseed, pkseed)  # Generate the public and secret keys from the seeds using the oracle's keygen_from_seeds method
+    pk, sk = oracle.keygen_from_seeds(skseed, pkseed)  # Generate the pk and sk from the seeds using the oracle's keygen_from_seeds
     security_level = oracle.security_level # Get the security level from the oracle for file naming and display purposes
     
     # Save keys and seeds to unencrypted files (testing the algorithm, thus no encryption needed)
@@ -250,7 +246,7 @@ def option1(model_name: str, oracle: MPCitHOracle) -> None:
     print(f"public_key: {pk.hex()}")
     print(f"private_key: {sk.hex()}")
 
-def option2(model_name: str, oracle: MPCitHOracle) -> None:
+def introduce_noise_to(model_name: str, oracle: MPCitHOracle) -> None:
     """Introduces noise to a candidate seed using CBA bit-flip probabilities and saves the noisy seeds to a file.
     You may select multiple beta values to generate different sets of noisy seeds for the same candidate seed and alpha value.
     
@@ -318,13 +314,19 @@ def option2(model_name: str, oracle: MPCitHOracle) -> None:
                 noisy_seed = introduce_noise(seed, alpha, beta)
                 noisy_seed_file.write(noisy_seed.hex() + "\n")
     
-def option3(model_name: str, oracle: MPCitHOracle) -> None:
+def run_bblm_on(model_name: str, oracle: MPCitHOracle) -> None:
     """Runs the BBLM attack for the selected model and security level, saving the results to a json file.
     
     Params:
         model_name: The name of the selected model (e.g., "SDITH").
         oracle: The instantiated oracle for the selected model and security level.
     """
+    
+    # TODO: Fix MQOM results and profiles, currently not working as expected (recovery rates too low even for low noise levels, 
+    # likely due to incorrect parameter selection or implementation details).
+    if model_name == "MQOM": 
+        print("MQOM is currently not working as expected. To be fixed in future iterations.")
+        return
     
     # Keep parameter selection compact: one defaults question plus one optional custom line.
     use_defaults = (input("\nUse defaults? (y/n): ").strip().lower() or "y")
@@ -364,8 +366,8 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
         if oracle.security_level == 5: max_candidates_cap = 2 << 8
         candidate_mode = "okea"
     elif candidate_policy == "l":
-        max_candidates_cap = 2 << 19
-        if oracle.security_level == 5: max_candidates_cap = 2 << 18
+        max_candidates_cap = 2 << 20
+        if oracle.security_level == 5: max_candidates_cap = 2 << 19
         candidate_mode = "lightweight"
     else:
         max_candidates_cap = 2 << 10
@@ -473,7 +475,7 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
                 )
             noisy_hex = noisy_seed.hex()
             candidate_limits_by_seed[noisy_hex] = candidate_limit
-            recovered = _process_noisy_seed_for_option3(
+            recovered = _process_noisy_seed(
                 noisy_seed,
                 alpha,
                 beta,
@@ -492,7 +494,8 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
             print(f"      Processed seed ({noisy_hex}). Recovered? {recovered} in {(time_ns() - t_init) / 1e9:.3f}s.")
 
         seeds_processed = len(noisy_seeds)
-        candidate_limit_avg = (sum(per_seed_candidate_limits) / len(per_seed_candidate_limits)) if per_seed_candidate_limits else 0.0
+        candidate_limit_avg = (sum(per_seed_candidate_limits) / 
+                               len(per_seed_candidate_limits)) if per_seed_candidate_limits else 0.0
         beta_results.append({
             "beta": beta,
             "B2_star": b2_star,
@@ -513,51 +516,179 @@ def option3(model_name: str, oracle: MPCitHOracle) -> None:
     with open(f"files/bblm/{model_name}_L{oracle.security_level}_recovery_{candidate_mode}.json", "w") as f:
         json.dump(results, f, indent=2)    
 
-def option4(model_name: str, oracle: MPCitHOracle) -> None:
-    """Graphs the results of multiple candidate seeds and noise levels for the selected model and security level.
-    
-    Params:
-        model_name: The name of the selected model (e.g., "SDITH").
-        oracle: The instantiated oracle for the selected model and security level.
+def plot_bblm_results() -> None:
+    """Graph BBLM recovery rates per beta, aggregated across all models.
+
+    Creates 3 plots (L1, L3, L5). Each plot contains one line per recovery method
+    (currently lightweight and beam), where each point is the recovery percentage
+    for a specific beta after compounding all available model result files.
     """
-    
-    # Load files with BBLM results for the selected model and security level, with validation
-    bblm_dir = "files/bblm"
-    if not os.path.exists(bblm_dir):
-        print(f"No BBLM results found for {model_name} L{oracle.security_level}. Run option 3 to generate results first and try again.")
-        return
-    bblm_file = f"{bblm_dir}/{model_name}_L{oracle.security_level}_recovery_lightweight.json"
-    try:
-        with open(bblm_file, "r") as f:
-            results = json.load(f)
-    except Exception as exc:
-        print(f"Could not read BBLM results file: {exc}. Run option 3 to generate results first and try again.")
-        return
 
     # Load matplotlib lazily to keep memory lower during attack runs.
     import matplotlib.pyplot as plt
 
-    # Plot the recovery probability against beta values using matplotlib, with appropriate labels and title based on the model, 
-    # security level, and parameters used in the BBLM attack
-    plt.figure(figsize=(10, 6))
-    plt.plot(
-        [br["beta"] for br in results["beta_results"]],
-        [br["recovery_probability"] for br in results["beta_results"]],
-        marker="o"
-    )
-    plt.title(
-        f"BBLM Attack Results for {model_name} L{oracle.security_level}, "
-        f"alpha={results['alpha']}, w={results['w']}, mu={results['mu']}"
-    )
-    plt.xlabel("Beta")
-    plt.ylabel("Recovery Probability")
-    plt.grid(True)
-    
+    bblm_dir = "files/bblm"
+    if not os.path.exists(bblm_dir):
+        print("No BBLM results found. Run option 3 to generate results first and try again.")
+        return
+
+    # Structure:
+    # aggregated_results[level][method][beta] = {"seeds": int, "recovered": int}
+    aggregated_results: dict[int, dict[str, dict[float, dict[str, int]]]] = {}
+
+    for filename in os.listdir(bblm_dir):
+        if not filename.endswith(".json"):
+            continue
+
+        filepath = os.path.join(bblm_dir, filename)
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            print(f"Warning: Could not read {filename}: {exc}")
+            continue
+
+        # Prefer metadata from content, then fallback to filename parsing.
+        security_level = data.get("security_level")
+        method = data.get("candidate_mode")
+
+        if security_level is None or method is None:
+            parts = filename.replace(".json", "").split("_")
+            parsed_level = None
+            parsed_method = None
+            for idx, part in enumerate(parts):
+                if part.startswith("L") and len(part) > 1 and part[1:].isdigit():
+                    parsed_level = int(part[1:])
+                if part == "recovery" and idx + 1 < len(parts):
+                    parsed_method = parts[idx + 1]
+            security_level = security_level if security_level is not None else parsed_level
+            method = method if method is not None else parsed_method
+
+        if security_level not in (1, 3, 5) or method is None:
+            print(f"Warning: Could not parse security level/method from {filename}")
+            continue
+
+        level_bucket = aggregated_results.setdefault(security_level, {})
+        method_bucket = level_bucket.setdefault(method, {})
+
+        for beta_result in data.get("beta_results", []):
+            beta_val = beta_result.get("beta")
+            if beta_val is None:
+                continue
+
+            beta = round(float(beta_val), 2)
+            beta_bucket = method_bucket.setdefault(beta, {"seeds": 0, "recovered": 0})
+            beta_bucket["seeds"] += int(beta_result.get("seeds_processed", 0))
+            beta_bucket["recovered"] += int(beta_result.get("recoveries", 0))
+
+    if not aggregated_results:
+        print("No valid BBLM results found to plot.")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6), sharey=True)
+    method_order = ["lightweight", "beam"]
+    method_styles = {
+        "lightweight": {"color": "#1f77b4", "marker": "o", "label": "Lightweight"},
+        "beam": {"color": "#ff7f0e", "marker": "s", "label": "Beam"},
+    }
+    plot_series_data: dict[int, dict[str, tuple[list[float], list[float]]]] = {1: {}, 3: {}, 5: {}}
+
+    for idx, security_level in enumerate([1, 3, 5]):
+        ax = axes[idx]
+        methods_data = aggregated_results.get(security_level, {})
+
+        if not methods_data:
+            ax.text(0.5, 0.5, f"No data for L{security_level}", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"Security Level {security_level}")
+            ax.set_xlabel("Beta")
+            ax.grid(True, alpha=0.3)
+            continue
+
+        plotted_any_series = False
+        for method in method_order:
+            if method not in methods_data:
+                continue
+
+            beta_buckets = methods_data[method]
+            betas = sorted(beta_buckets.keys())
+            if not betas:
+                continue
+
+            rates = []
+            for beta in betas:
+                seeds = beta_buckets[beta]["seeds"]
+                recovered = beta_buckets[beta]["recovered"]
+                rates.append((recovered / seeds) * 100 if seeds > 0 else 0.0)
+
+            style = method_styles.get(method, {"color": "#333333", "marker": "o", "label": method.capitalize()})
+            ax.plot(
+                betas,
+                rates,
+                linewidth=2,
+                markersize=6,
+                color=style["color"],
+                marker=style["marker"],
+                label=style["label"],
+            )
+            plot_series_data[security_level][method] = (betas, rates)
+            plotted_any_series = True
+
+        ax.set_title(f"Security Level {security_level}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Beta")
+        ax.set_ylabel("Recovery Rate (%)")
+        ax.set_ylim(0, 105)
+        ax.grid(True, alpha=0.3)
+
+        if plotted_any_series:
+            ax.legend(loc="best")
+
+    plt.suptitle("BBLM Recovery by Beta (Aggregated Across All Models)", fontsize=14, fontweight="bold", y=1.02)
+    plt.tight_layout()
+
     os.makedirs("files/figures", exist_ok=True)
-    plt.savefig(f"files/figures/{model_name}_L{oracle.security_level}_recovery_plot.png")
+    out_file = "files/figures/bblm_results_all_levels_by_beta.png"
+    plt.savefig(out_file, dpi=150, bbox_inches="tight")
+    print(f"Plot saved to {out_file}")
+
+    # Export one figure per security level as well.
+    for security_level in [1, 3, 5]:
+        level_file = f"files/figures/bblm_results_L{security_level}_by_beta.png"
+        fig_level, ax_level = plt.subplots(figsize=(8, 5))
+
+        methods_for_level = plot_series_data.get(security_level, {})
+        if not methods_for_level:
+            ax_level.text(0.5, 0.5, f"No data for L{security_level}", ha="center", va="center", transform=ax_level.transAxes)
+        else:
+            for method in method_order:
+                if method not in methods_for_level:
+                    continue
+                betas, rates = methods_for_level[method]
+                style = method_styles.get(method, {"color": "#333333", "marker": "o", "label": method.capitalize()})
+                ax_level.plot(
+                    betas,
+                    rates,
+                    linewidth=2,
+                    markersize=6,
+                    color=style["color"],
+                    marker=style["marker"],
+                    label=style["label"],
+                )
+            ax_level.legend(loc="best")
+
+        ax_level.set_title(f"Security Level {security_level}", fontsize=12, fontweight="bold")
+        ax_level.set_xlabel("Beta")
+        ax_level.set_ylabel("Recovery Rate (%)")
+        ax_level.set_ylim(0, 105)
+        ax_level.grid(True, alpha=0.3)
+
+        fig_level.tight_layout()
+        fig_level.savefig(level_file, dpi=150, bbox_inches="tight")
+        plt.close(fig_level)
+        print(f"Plot saved to {level_file}")
+
     plt.show()
     
-def option5(oracle: MPCitHOracle, candidate_seed: bytes, public_key: bytes) -> bool:
+def test_candidate_seed(oracle: MPCitHOracle, candidate_seed: bytes, public_key: bytes) -> bool:
     """Tests a singular candidate seed against the oracle algorithm for the selected model and security level.
     
     Params:
@@ -580,7 +711,7 @@ def main() -> None:
         print("\nAvailable models:")
         print("\t1: SDITH")
         print("\t2: MIRATH")
-        print("\t3: MQOM")
+        print("\t3: MQOM (Not working as expected yet, use with caution)")
         print("\t4: PERK")
         print("\t5: RYDE")
         model_input = int(input("Select the model to test: "))
@@ -637,21 +768,21 @@ def main() -> None:
         if operation_input == 0: 
             print("\nExiting the program.")
             return
-        elif operation_input == 1: option1(model_name, oracle)
-        elif operation_input == 2: option2(model_name, oracle)
-        elif operation_input == 3: option3(model_name, oracle)
-        elif operation_input == 4: option4(model_name, oracle)
+        elif operation_input == 1: generate_seeds(model_name, oracle)
+        elif operation_input == 2: introduce_noise_to(model_name, oracle)
+        elif operation_input == 3: run_bblm_on(model_name, oracle)
+        elif operation_input == 4: plot_bblm_results()
         elif operation_input == 5:
             candidate_seed_file = input("\nEnter the name of the file with the candidate seed to test (blank for default): ")
             if candidate_seed_file == "":
-                candidate_seed_file = f"files/keys/{model_name}_L{oracle.security_level}_skseed.pem"  # Default file name for testing
+                candidate_seed_file = f"files/keys/{model_name}_L{oracle.security_level}_skseed.pem"  # Default file name
             try:
                 with open(candidate_seed_file, "r") as seed_file:
                     candidate_seed = bytes.fromhex(seed_file.read().strip())
             except FileNotFoundError:
                 print("File not found.")
                 continue
-            res = option5(oracle, candidate_seed, candidate_seed)
+            res = test_candidate_seed(oracle, candidate_seed, candidate_seed)
             print("Candidate seed " + ("passed" if res else "failed") + " the test against the oracle.")
         else:
             print("\nInvalid operation selected. Please try again.")

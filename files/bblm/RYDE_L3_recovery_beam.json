@@ -1,0 +1,153 @@
+{
+  "model": "RYDE",
+  "security_level": 3,
+  "alpha": 0.001,
+  "b2_strategy": "d",
+  "candidate_mode": "beam",
+  "max_candidates_cap": 2048,
+  "cost_model": {
+    "Cbase": 32,
+    "Cblock": 16,
+    "Coracle": 64
+  },
+  "beta_results": [
+    {
+      "beta": 0.03,
+      "B2_star": 136560,
+      "B2_source": "static_default:W192_beta0.03",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 1,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "a5d04050f4b569585b83c029d248fe6380a32977b1e2e082": false,
+        "a5d04840f4b569585b83c229d648fe6380a30a77b1e2e082": false,
+        "a5d04850f4b569585983c229d608fe6380a32b77b1c2e082": false,
+        "a5d04850f4b569585b83c2299648fe6380a32b75b1e2e082": false,
+        "a5d04850f4b569585a83c2299648fe6380a32b77b1e2a082": false,
+        "a5d04850e4b569585b83c229d648fe6380832b77b1e2e082": true,
+        "a5d04850f0b569585b83c229d248fe6380a12b77b1e2e082": false,
+        "a5d04850a4b569585b83c229d648fe6380a32b77b1e2e082": false,
+        "a5c04852f4b561485b83c229d648fe6380a32a77b162e082": false,
+        "a4d04850f4b569585b83c229d648fe6180a32a67b1e2e082": false
+      }
+    },
+    {
+      "beta": 0.05,
+      "B2_star": 141080,
+      "B2_source": "static_default:W192_beta0.05",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "a5d04850f43569585b83c2295248fe6380a30977b1e2a082": false,
+        "a5d04840f4b569584b838229d648fe6380212b37b1e26082": false,
+        "a5f04850f4b569585b838229d6487e6380a30b77b1e2e082": false,
+        "a5d04850f4b569585b83c209d648ee6380a32b77b1e2a080": false,
+        "a5904850f4b469585b83c029d648fe2300a32a77b1e2e082": false,
+        "a5d04850f4b569585b83c229d6487e6380a32977b1a2e082": false,
+        "a5d04850f4b469585b83c029d648ee4380a32b7791e2c082": false,
+        "a1d04850e4b529505383c229d648fe6380a32b77b1e2e082": false,
+        "a5d04850f43569585b83c229d648fa6380a32b77b162e082": false,
+        "a5d04850f4b569585a03c209d448fe6390a32b57b1e2e082": false
+      }
+    },
+    {
+      "beta": 0.1,
+      "B2_star": 175837,
+      "B2_source": "static_default:W192_beta0.10",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "a5c04850f4b561585b83c229d648f66380a32bf531e2e082": false,
+        "a4d04800d4b161585b82c229d6007e6380a32a64b1e2e082": false,
+        "a5d04850e49569185b83c229d648e66380a32b37b1e2e082": false,
+        "21d0485074b548581383c209d248fe4300a32b47a1e2e082": false,
+        "a5d04850f425615859838229d6487e6380a32b77b1e2e082": false,
+        "a5c04850b4b568505b81c229d648fe6380a32937b1e2a082": false,
+        "85d04850b4b569505983c229d648de6380a32b73b1c2e082": false,
+        "a5d04850f49569505b82c2299448fe6380232b76b1e2e082": false,
+        "a5d04850d4a569185993c229d608fe6380a32b55b1c2c082": false,
+        "a5d04810f4b569585b83c229d648fe4380232b57b1e2e082": false
+      }
+    },
+    {
+      "beta": 0.15,
+      "B2_star": 218667,
+      "B2_source": "static_default:W192_beta0.15",
+      "w_used": 4,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "25d04850bcb469581b82c229d600fe6380832b77b142e082": false,
+        "a5904050b0b529585b03c229d440fe6380a22b55b1c2a082": false,
+        "a5d00850f4b529585b81c229d248766380a32b77b1e2e082": false,
+        "81904850f4b569585b8382294648fe6380a32a7691e26082": false,
+        "a5d00850f4b4695853814229c648fc2380a10b57b1a2a082": false,
+        "a4d00850f0b5495853834229d6487e6380a30b37b0e2c082": false,
+        "a590485074b569505383c029d248fc6380a32b37b120e082": false,
+        "a1c04850e0b169105b834229d648dc6380a12b6731c2a080": false,
+        "a5d0485044b529585881c229d448ee6380a02a77b1e2e082": false,
+        "a5d04850b0b568485383c02946487e6280032b77a1e2e082": false
+      }
+    },
+    {
+      "beta": 0.2,
+      "B2_star": 284221,
+      "B2_source": "static_default:W192_beta0.20",
+      "w_used": 8,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "a4d04050a4b529404b81c2215648de4380a3231131e2e000": false,
+        "a5100810f4b529581b02c229d248fe6380a22b66b0c2a082": false,
+        "05904050f4a569585a01c2295640cc4100a10b6791e2e080": false,
+        "81d04000f09529585a81c22890482e6300a3235730e2a082": false,
+        "a5800840b0a548505383c2295408766200832b3391c08082": false,
+        "a5504040f0b129585a83c0295648e66380a32a559162e082": false,
+        "25d04850e0b549585b838228d608d66380232a7731a08082": false,
+        "a580485094a569584b034221d648fe6280210b77b082c082": false,
+        "a5d0085084a560484b82c221c448fc0280a32b53a0e26002": false,
+        "25d04850e4b569500b838209d648fa6280a10b75b1a06080": false
+      }
+    },
+    {
+      "beta": 0.25,
+      "B2_star": 348805,
+      "B2_source": "static_default:W192_beta0.25",
+      "w_used": 16,
+      "mu_used": 64,
+      "eta_used": 2,
+      "seeds_processed": 10,
+      "recoveries": 0,
+      "candidate_limit": 2048.0,
+      "per_seed_results": {
+        "a5904850d035210853808229d608be2080230374b0a2e082": false,
+        "a0d04810b42508481a00c228d0081e6180a12b7731c24002": false,
+        "85d04840549569081993c229d448ec6200a3237290e0e082": false,
+        "a1d04800d4b449085b03c02156407e6180832377a0c0e082": false,
+        "25d0080054a509505b830229d0481a2380832067b1a22082": false,
+        "00c0485090b521485b8240295648fa2380232337b1e0e082": false,
+        "a5d00050d4b5214859830029d2488e63802329779122a082": false,
+        "2540404070b54958590280299000d6030021097721a2e002": false,
+        "a1500840f03569485a838221c648b2610021217721c2a082": false,
+        "85d04850743469485982c0298648de2000a30b47b1e06082": false
+      }
+    }
+  ]
+}

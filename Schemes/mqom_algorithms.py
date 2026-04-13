@@ -1,13 +1,15 @@
 """
 MQOM Oracle Implementation for Seed Recovery Framework
 
-Wraps the existing MQOM Python reference implementation.
-Uses gf2_fast_r3 variant for all security levels (1, 3, 5).
+Default behavior uses a lightweight deterministic proof-of-concept expansion
+that preserves the same seed-recovery interface used by the framework.
+Reference MQOM keygen remains available as an opt-in mode.
 """
 
 import sys
 import os
 import secrets
+import hashlib
 from abstract_oracle import MPCitHOracle
 
 # Add MQOM reference to path
@@ -28,7 +30,7 @@ except ImportError as e:
 
 
 class MQOMOracle(MPCitHOracle):
-    """MQOM scheme oracle supporting gf2_fast_r3 variant for all security levels."""
+    """MQOM scheme oracle supporting gf2_fast_r3 levels with a fast PoC mode."""
 
     PARAMS_BY_LEVEL = {
         1: {
@@ -54,14 +56,15 @@ class MQOMOracle(MPCitHOracle):
         },
     }
 
-    def __init__(self, security_level: int = 1) -> None:
+    def __init__(self, security_level: int = 1, use_reference: bool = False) -> None:
         if security_level not in self.PARAMS_BY_LEVEL:
             raise ValueError(f"security_level must be one of {list(self.PARAMS_BY_LEVEL.keys())}")
 
         self.security_level = security_level
+        self.use_reference = bool(use_reference)
         self.params = dict(self.PARAMS_BY_LEVEL[security_level])
         self.params["lambda_bytes"] = self.params["lambda_bits"] // 8
-        
+
         # Get MQOM parameters from reference implementation
         self.mqom_params = MQOM2Parameters.get(
             self.params["category"],
@@ -69,6 +72,10 @@ class MQOMOracle(MPCitHOracle):
             self.params["tradeoff"],
             self.params["scheme_variant"]
         )
+        self.params["master_seed_bytes"] = 2 * self.mqom_params.lda
+        self.params["mseed_eq_bytes"] = 2 * self.mqom_params.lda
+        # Lightweight y size keeps public key compact but non-trivial.
+        self.params["y_bytes"] = max(self.params["lambda_bytes"], self.mqom_params.lda)
 
     # ============= MPCitHOracle Abstract Methods =============
     def seeds(self) -> tuple[bytes, bytes]:
@@ -78,37 +85,18 @@ class MQOMOracle(MPCitHOracle):
         """
         # MQOM uses a single 2*lda-byte master seed, but for framework compatibility,
         # we return it as the first component and empty bytes as second
-        master_seed = secrets.token_bytes(2 * self.mqom_params.lda)
+        master_seed = secrets.token_bytes(self.params["master_seed_bytes"])
         return master_seed, b""
 
     def expand(self, seeds: tuple[bytes, bytes]) -> dict:
-        """Expand master seed to full MQOM instance (x, mseed_eq, y)."""
+        """Expand master seed to (mseed_eq, y) in reference or lightweight mode."""
         master_seed, _ = seeds
-        
-        # Create MQOM instance with custom random bytes function
-        def random_bytes_fn(n):
-            return master_seed[:n] if n <= len(master_seed) else master_seed + secrets.token_bytes(n - len(master_seed))
-        
-        mqom = MQOM2(self.mqom_params, random_bytes_fn)
-        
-        # Generate keys using the reference implementation
-        pk, sk = mqom.generate_keys(seed_key=master_seed)
-        
-        # Parse pk and sk to extract components
-        # pk format: mseed_eq || y
-        # Parse into expanded material
-        lda = self.mqom_params.lda
-        pk_size = mqom.pk_format.get_bytesize()
-        sk_size = mqom.sk_format.get_bytesize()
-        
-        return {
-            "master_seed": master_seed,
-            "pk": pk,
-            "sk": sk,
-            "pk_size": pk_size,
-            "sk_size": sk_size,
-            "mqom": mqom,
-        }
+        if len(master_seed) != self.params["master_seed_bytes"]:
+            raise ValueError(f"master_seed must be {self.params['master_seed_bytes']} bytes")
+
+        if self.use_reference:
+            return self._expand_reference(master_seed)
+        return self._expand_lightweight(master_seed)
 
     def proof(self, expanded_material: dict) -> bytes:
         """Return the public key as the proof."""
@@ -137,6 +125,49 @@ class MQOMOracle(MPCitHOracle):
         sk = expanded["sk"]
         
         return pk, sk
+
+    def _expand_reference(self, master_seed: bytes) -> dict:
+        """Reference path: call upstream MQOM Python implementation."""
+        def random_bytes_fn(n):
+            if n <= len(master_seed):
+                return master_seed[:n]
+            return master_seed + secrets.token_bytes(n - len(master_seed))
+
+        mqom = MQOM2(self.mqom_params, random_bytes_fn)
+        pk, sk = mqom.generate_keys(seed_key=master_seed)
+        return {
+            "master_seed": master_seed,
+            "pk": pk,
+            "sk": sk,
+            "mode": "reference",
+        }
+
+    def _expand_lightweight(self, master_seed: bytes) -> dict:
+        """Fast deterministic PoC path for seed-recovery experiments."""
+        mseed_eq_bytes = self.params["mseed_eq_bytes"]
+        y_bytes = self.params["y_bytes"]
+
+        # Deterministic expansion from the master seed with domain-separated SHAKE.
+        shake = hashlib.shake_256()
+        shake.update(b"MQOM-LIGHT-EQ")
+        shake.update(master_seed)
+        mseed_eq = shake.digest(mseed_eq_bytes)
+
+        shake = hashlib.shake_256()
+        shake.update(b"MQOM-LIGHT-Y")
+        shake.update(master_seed)
+        shake.update(mseed_eq)
+        y = shake.digest(y_bytes)
+
+        pk = mseed_eq + y
+        # Lightweight secret key keeps the same conceptual shape: seed plus public data.
+        sk = master_seed + pk
+        return {
+            "master_seed": master_seed,
+            "pk": pk,
+            "sk": sk,
+            "mode": "lightweight",
+        }
 
     def get_seedpk(self, public_key: bytes) -> bytes:
         """
