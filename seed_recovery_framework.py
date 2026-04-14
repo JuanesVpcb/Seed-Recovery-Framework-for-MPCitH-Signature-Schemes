@@ -157,7 +157,7 @@ def _budget_candidate_limit_from_model_prediction(
     fixed_B2: int | None = None,
     max_candidates: int | None = None,
 ) -> int:
-    """Derive a candidate budget from Model_Prediction.py using Btime/Bmemory.
+    """Derive a candidate budget from the BBLM cost model using Btime/Bmemory.
     
     If fixed_B2 is provided, use it instead of optimizing B2* for each seed (faster, more stable)."""
     s_tilde = bitarray()
