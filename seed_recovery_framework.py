@@ -1,8 +1,6 @@
 import os
 import json
-import math
 from time import time_ns
-
 from bitarray import bitarray
 
 from abstract_oracle import MPCitHOracle
@@ -321,12 +319,6 @@ def run_bblm_on(model_name: str, oracle: MPCitHOracle) -> None:
         model_name: The name of the selected model (e.g., "SDITH").
         oracle: The instantiated oracle for the selected model and security level.
     """
-    
-    # TODO: Fix MQOM results and profiles, currently not working as expected (recovery rates too low even for low noise levels, 
-    # likely due to incorrect parameter selection or implementation details).
-    if model_name == "MQOM": 
-        print("MQOM is currently not working as expected. To be fixed in future iterations.")
-        return
     
     # Keep parameter selection compact: one defaults question plus one optional custom line.
     use_defaults = (input("\nUse defaults? (y/n): ").strip().lower() or "y")
@@ -685,8 +677,6 @@ def plot_bblm_results() -> None:
         fig_level.savefig(level_file, dpi=150, bbox_inches="tight")
         plt.close(fig_level)
         print(f"Plot saved to {level_file}")
-
-    plt.show()
     
 def test_candidate_seed(oracle: MPCitHOracle, candidate_seed: bytes, public_key: bytes) -> bool:
     """Tests a singular candidate seed against the oracle algorithm for the selected model and security level.
@@ -724,7 +714,6 @@ def main() -> None:
                           MQOM: "MQOM", 
                           PERK: "PERK", 
                           RYDE: "RYDE"}[model_input]
-            print(f"Selected model: {model_name}")
             break
     
     # --------------------------- Security level selection --------------------------
