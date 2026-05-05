@@ -355,15 +355,15 @@ def run_bblm_on(model_name: str, oracle: MPCitHOracle) -> None:
 
     if candidate_policy == "o":
         max_candidates_cap = 2 << 9
-        if oracle.security_level == 5: max_candidates_cap = 2 << 8
+        if oracle.security_level == 5 or oracle.params["lambda_bytes"] >= 32: max_candidates_cap = 2 << 8
         candidate_mode = "okea"
     elif candidate_policy == "l":
         max_candidates_cap = 2 << 20
-        if oracle.security_level == 5: max_candidates_cap = 2 << 19
+        if oracle.security_level == 5 or oracle.params["lambda_bytes"] >= 32: max_candidates_cap = 2 << 19
         candidate_mode = "lightweight"
     else:
         max_candidates_cap = 2 << 10
-        if oracle.security_level == 5: max_candidates_cap = 2 << 9
+        if oracle.security_level == 5 or oracle.params["lambda_bytes"] >= 32: max_candidates_cap = 2 << 9
         candidate_mode = "beam"
     
     print(f"\nRunning BBLM-style reconstruction for {model_name} L{oracle.security_level}...")
@@ -511,7 +511,7 @@ def run_bblm_on(model_name: str, oracle: MPCitHOracle) -> None:
 def plot_bblm_results() -> None:
     """Graph BBLM recovery rates per beta, aggregated across all models.
 
-    Creates 3 plots (L1, L3, L5). Each plot contains one line per recovery method
+    Creates 3 plots (16B, 24B, 32B seed length). Each plot contains one line per recovery method
     (currently lightweight and beam), where each point is the recovery percentage
     for a specific beta after compounding all available model result files.
     """
@@ -525,8 +525,27 @@ def plot_bblm_results() -> None:
         return
 
     # Structure:
-    # aggregated_results[level][method][beta] = {"seeds": int, "recovered": int}
+    # aggregated_results[seed_bytes][method][beta] = {"seeds": int, "recovered": int}
     aggregated_results: dict[int, dict[str, dict[float, dict[str, int]]]] = {}
+
+    # Helper mapping: (model, security_level) -> seed_bytes
+    seed_length_map = {
+        ("SDITH", 1): 16,
+        ("SDITH", 3): 24,
+        ("SDITH", 5): 32,
+        ("PERK", 1): 16,
+        ("PERK", 3): 24,
+        ("PERK", 5): 32,
+        ("RYDE", 1): 16,
+        ("RYDE", 3): 24,
+        ("RYDE", 5): 32,
+        ("MIRATH", 1): 16,
+        ("MIRATH", 3): 24,
+        ("MIRATH", 5): 32,
+        ("MQOM", 1): 32,
+        ("MQOM", 3): 48,
+        ("MQOM", 5): 64,
+    }
 
     for filename in os.listdir(bblm_dir):
         if not filename.endswith(".json"):
@@ -541,27 +560,43 @@ def plot_bblm_results() -> None:
             continue
 
         # Prefer metadata from content, then fallback to filename parsing.
+        model = data.get("model")
         security_level = data.get("security_level")
         method = data.get("candidate_mode")
 
         if security_level is None or method is None:
             parts = filename.replace(".json", "").split("_")
+            parsed_model = None
             parsed_level = None
             parsed_method = None
             for idx, part in enumerate(parts):
+                if part in ("SDITH", "PERK", "RYDE", "MIRATH", "MQOM"):
+                    parsed_model = part
                 if part.startswith("L") and len(part) > 1 and part[1:].isdigit():
                     parsed_level = int(part[1:])
                 if part == "recovery" and idx + 1 < len(parts):
                     parsed_method = parts[idx + 1]
+            model = model if model is not None else parsed_model
             security_level = security_level if security_level is not None else parsed_level
             method = method if method is not None else parsed_method
 
-        if security_level not in (1, 3, 5) or method is None:
-            print(f"Warning: Could not parse security level/method from {filename}")
+        if security_level not in (1, 3, 5) or method is None or model is None:
+            print(f"Warning: Could not parse model/security level/method from {filename}")
             continue
 
-        level_bucket = aggregated_results.setdefault(security_level, {})
-        method_bucket = level_bucket.setdefault(method, {})
+        # Skip MQOM L3 and L5 (seed_bytes 48 and 64)
+        if model == "MQOM" and security_level in (3, 5):
+            print(f"Skipping {filename} (MQOM L{security_level} excluded)")
+            continue
+
+        # Determine seed-length in bytes
+        seed_bytes = seed_length_map.get((model, security_level))
+        if seed_bytes is None:
+            print(f"Warning: Could not determine seed-length for {model} L{security_level}")
+            continue
+
+        seed_bucket = aggregated_results.setdefault(seed_bytes, {})
+        method_bucket = seed_bucket.setdefault(method, {})
 
         for beta_result in data.get("beta_results", []):
             beta_val = beta_result.get("beta")
@@ -583,15 +618,15 @@ def plot_bblm_results() -> None:
         "lightweight": {"color": "#1f77b4", "marker": "o", "label": "Lightweight"},
         "beam": {"color": "#ff7f0e", "marker": "s", "label": "Beam"},
     }
-    plot_series_data: dict[int, dict[str, tuple[list[float], list[float]]]] = {1: {}, 3: {}, 5: {}}
+    plot_series_data: dict[int, dict[str, tuple[list[float], list[float]]]] = {16: {}, 24: {}, 32: {}}
 
-    for idx, security_level in enumerate([1, 3, 5]):
+    for idx, seed_bytes in enumerate([16, 24, 32]):
         ax = axes[idx]
-        methods_data = aggregated_results.get(security_level, {})
+        methods_data = aggregated_results.get(seed_bytes, {})
 
         if not methods_data:
-            ax.text(0.5, 0.5, f"No data for L{security_level}", ha="center", va="center", transform=ax.transAxes)
-            ax.set_title(f"Security Level {security_level}")
+            ax.text(0.5, 0.5, f"No data for {seed_bytes}-byte seed", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"Seed Length: {seed_bytes} Bytes")
             ax.set_xlabel("Beta")
             ax.grid(True, alpha=0.3)
             continue
@@ -622,10 +657,10 @@ def plot_bblm_results() -> None:
                 marker=style["marker"],
                 label=style["label"],
             )
-            plot_series_data[security_level][method] = (betas, rates)
+            plot_series_data[seed_bytes][method] = (betas, rates)
             plotted_any_series = True
 
-        ax.set_title(f"Security Level {security_level}", fontsize=12, fontweight="bold")
+        ax.set_title(f"Seed Length: {seed_bytes} Bytes", fontsize=12, fontweight="bold")
         ax.set_xlabel("Beta")
         ax.set_ylabel("Recovery Rate (%)")
         ax.set_ylim(0, 105)
@@ -642,14 +677,14 @@ def plot_bblm_results() -> None:
     plt.savefig(out_file, dpi=150, bbox_inches="tight")
     print(f"Plot saved to {out_file}")
 
-    # Export one figure per security level as well.
-    for security_level in [1, 3, 5]:
-        level_file = f"files/figures/bblm_results_L{security_level}_by_beta.png"
+    # Export one figure per seed length as well.
+    for seed_bytes in [16, 24, 32]:
+        level_file = f"files/figures/bblm_results_{seed_bytes}B_by_beta.png"
         fig_level, ax_level = plt.subplots(figsize=(8, 5))
 
-        methods_for_level = plot_series_data.get(security_level, {})
+        methods_for_level = plot_series_data.get(seed_bytes, {})
         if not methods_for_level:
-            ax_level.text(0.5, 0.5, f"No data for L{security_level}", ha="center", va="center", transform=ax_level.transAxes)
+            ax_level.text(0.5, 0.5, f"No data for {seed_bytes}-byte seed", ha="center", va="center", transform=ax_level.transAxes)
         else:
             for method in method_order:
                 if method not in methods_for_level:
@@ -667,7 +702,7 @@ def plot_bblm_results() -> None:
                 )
             ax_level.legend(loc="best")
 
-        ax_level.set_title(f"Security Level {security_level}", fontsize=12, fontweight="bold")
+        ax_level.set_title(f"Seed Length: {seed_bytes} Bytes", fontsize=12, fontweight="bold")
         ax_level.set_xlabel("Beta")
         ax_level.set_ylabel("Recovery Rate (%)")
         ax_level.set_ylim(0, 105)
